@@ -164,6 +164,32 @@ apply these inlined rules — they're the distilled essentials of all four.
   labels. Audit user-rendered prose for these. Server-side: humanize the
   prompt input. Client-side: scrub on display as defense-in-depth.
 
+**3D / WebGL (Three.js, React Three Fiber):**
+
+- 3D earns its place or it doesn't ship. A WebGL hero that says nothing the
+  product needs to say is the most expensive AI-slop pattern there is — a
+  spinning torus knot behind a SaaS headline is decoration, flag it.
+- When 3D *is* the product (configurators, data viz in space, spatial scenes,
+  scroll-driven narrative), the toolchain is `three` + `@react-three/fiber`
+  in React projects, with `@react-three/drei` for camera/controls/loaders and
+  raw GLSL shaders only where a stock material can't get there. Recommend the
+  declarative R3F path over imperative `new THREE.Scene()` in any React/Expo
+  codebase — it matches the existing component model instead of fighting it.
+- Performance is a design property here, not an afterthought. Audit for: an
+  uncapped `requestAnimationFrame` loop with no `frameloop="demand"` when the
+  scene is static; geometries/materials/textures created inside render
+  instead of memoized; missing `dispose()` on unmount (GPU memory leak); no
+  draw-call budget on mobile. A janky 3D scene reads as broken, not premium.
+- Accessibility and fallback are not optional. WebGL context can fail or be
+  disabled — require a non-3D fallback (`<canvas>` with a poster image or a
+  flat layout), respect `prefers-reduced-motion` (kill autorotate and
+  scroll-jacking), and never trap keyboard focus inside an OrbitControls
+  canvas with no escape.
+- The Instagram-demo look (neon GLSL gradients, fog, bloom on everything,
+  anime cel-shading) is itself a fingerprint now. Same rule as the palette
+  bans: if the 3D treatment could be lifted onto any other site unchanged,
+  it's template, not craft.
+
 ### A6. Write the doc
 
 Save at `docs/RUFUS_AUDIT_<YYYY-MM-DD>.md`. If a doc exists for today,
