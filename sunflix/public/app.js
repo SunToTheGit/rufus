@@ -1,6 +1,10 @@
 'use strict';
 /* SunFlix web client. Plain DOM, hash routing, no build step. */
 
+// Where the SunFlix server is. Empty when this page is served by the server itself; the
+// hosted copy of the web app (see netlify.toml) points it at the owner's server.
+const BASE = String(window.SUNFLIX_SERVER || '').replace(/\/+$/, '');
+
 const app = document.getElementById('app');
 const S = { items: [], byId: new Map(), shows: new Map(), cont: [], status: {}, mediaDirs: [], loaded: false };
 let player = null;   // { destroy() } while a video is open
@@ -52,7 +56,7 @@ function runtime(sec) {
 
 const quality = (it) => (it.height >= 2000 || it.width >= 3800 ? '4K' : it.height >= 1000 || it.width >= 1900 ? 'HD 1080' : it.height >= 700 ? 'HD 720' : 'SD');
 const epCode = (it) => `S${it.season} E${it.episode}`;
-const art = (id, kind, w) => `/art/${id}?kind=${kind}&w=${w}`;
+const art = (id, kind, w) => `${BASE}/art/${id}?kind=${kind}&w=${w}`;
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 let langNames = null;
@@ -69,13 +73,57 @@ function langLabel(track, fallback) {
 }
 
 async function api(path, body) {
-  const res = await fetch(path, body === undefined ? {} : {
+  const res = await fetch(BASE + path, body === undefined ? {} : {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
   if (res.status === 401 && path !== '/api/login') { showLogin(); throw new Error('login required'); }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
   return data;
+}
+
+// Guests of a public library keep their place in this browser; the owner's is kept on the server.
+const LOCAL_PROGRESS = 'sunflix-progress';
+function localProgress() {
+  try { return JSON.parse(localStorage.getItem(LOCAL_PROGRESS)) || {}; } catch { return {}; }
+}
+function saveLocal(id, entry) {
+  try {
+    const all = localProgress();
+    all[id] = { ...entry, updatedAt: Date.now() };
+    localStorage.setItem(LOCAL_PROGRESS, JSON.stringify(all));
+  } catch { /* private mode: nothing is remembered */ }
+}
+
+function saveProgress(item, position) {
+  if (!S.guest) return api(`/api/progress/${item.id}`, { position }).catch(() => {});
+  const watched = item.duration > 0 && position >= item.duration * 0.92;
+  saveLocal(item.id, { position: watched ? 0 : position, watched });
+  return Promise.resolve();
+}
+
+function markWatched(item, watched) {
+  if (!S.guest) return api(`/api/watched/${item.id}`, { watched });
+  saveLocal(item.id, { position: 0, watched });
+  return Promise.resolve();
+}
+
+// The guest version of the server's Continue watching list: videos in progress, plus the
+// next episode of a show whose latest episode was finished.
+function localContinue(local) {
+  const stamp = new Map();
+  for (const it of S.items) {
+    const p = local[it.id];
+    if (p && !p.watched && p.position > 15) stamp.set(it, p.updatedAt);
+  }
+  for (const show of S.shows.values()) {
+    const seen = show.episodes.filter((e) => local[e.id]);
+    if (!seen.length) continue;
+    const last = seen.reduce((a, b) => (local[b.id].updatedAt > local[a.id].updatedAt ? b : a));
+    const next = show.episodes[show.episodes.indexOf(last) + 1];
+    if (local[last.id].watched && next && !(local[next.id] || {}).watched && !stamp.has(next)) stamp.set(next, local[last.id].updatedAt);
+  }
+  return [...stamp].sort((a, b) => b[1] - a[1]).slice(0, 24).map(([it]) => it);
 }
 
 // ------------------------------------------------------------------ library
@@ -101,8 +149,19 @@ async function loadLibrary() {
     Object.assign(show, lib.shows[show.key]); // synopsis, cast and so on, when TMDB lookup is on
   }
   S.meta = lib.metadata;
+  S.guest = Boolean(lib.guest);
+  if (S.guest) {
+    const local = localProgress();
+    for (const it of S.items) {
+      const p = local[it.id];
+      if (p) { it.position = p.position || 0; it.watched = Boolean(p.watched); }
+    }
+    S.cont = localContinue(local);
+  }
   S.loaded = true;
   document.getElementById('logout').hidden = !lib.canLogout;
+  document.getElementById('login').hidden = !(lib.canLogin && !BASE); // owner sign-in only works on the server's own address
+  document.getElementById('rescan').hidden = S.guest;
   const btn = document.getElementById('rescan');
   const looking = Boolean(S.meta && S.meta.busy);
   btn.disabled = lib.status.scanning;
@@ -272,6 +331,7 @@ function slideFor(it, eyebrow) {
 
 function emptyState() {
   const scanning = S.status.scanning;
+  if (S.guest && !scanning) return h('div', { class: 'empty' }, h('h1', {}, 'Nothing to watch yet'), h('p', {}, 'This library is empty for now. Check back later.'));
   return h('div', { class: 'empty' },
     h('h1', {}, scanning ? 'Scanning your library…' : 'Nothing to watch yet'),
     scanning
@@ -351,7 +411,7 @@ function facts(it) {
     ['Video', `${it.width}×${it.height} · ${codec}${it.playback === 'direct' ? '' : it.playback === 'remux' ? ' · repackaged as you watch' : ' · converted as you watch'}`],
     named ? ['Audio', tracks(it.audio)] : null,
     it.subs.length ? ['Subtitles', tracks(it.subs)] : null,
-    ['File', it.file],
+    it.file ? ['File', it.file] : null,
   ];
   return h('dl', { class: 'facts' }, rows.filter(Boolean).map(([k, v]) => h('div', {}, h('dt', {}, k), h('dd', {}, v))));
 }
@@ -369,7 +429,7 @@ function viewItem(id) {
   const it = S.byId.get(id);
   if (!it) return viewMissing();
   const isEp = it.type === 'episode';
-  const setWatched = async (watched) => { await api(`/api/watched/${it.id}`, { watched }); await refresh(); };
+  const setWatched = async (watched) => { await markWatched(it, watched); await refresh(); };
   const others = movies().filter((m) => m.id !== it.id).sort((a, b) => Number(a.watched) - Number(b.watched) || b.addedAt - a.addedAt);
   return [
     hero([{
@@ -460,7 +520,9 @@ function showLogin() {
     } catch (ex) { err.textContent = ex.message; input.select(); }
   } },
   h('div', { class: 'logo' }, h('span', {}, h('b', {}, 'Sun'), 'Flix')),
-  input, h('button', { class: 'btn primary', type: 'submit' }, 'Sign in'), err);
+  input, h('button', { class: 'btn primary', type: 'submit' }, 'Sign in'), err,
+  // In a public library signing in is optional, so there has to be a way back out.
+  S.guest ? h('button', { class: 'ghost', type: 'button', onclick: () => { document.body.classList.remove('locked'); render(); } }, 'Back to the library') : null);
   app.replaceChildren(form);
   input.focus();
 }
@@ -570,7 +632,7 @@ function openPlayer(id, query) {
     msg.hidden = true;
     if (P.mode === 'direct') {
       P.offset = 0;
-      video.src = `/stream/${item.id}`;
+      video.src = `${BASE}/stream/${item.id}`;
       if (t > 0) video.addEventListener('loadedmetadata', () => { if (mine === loads) video.currentTime = t; }, { once: true });
     } else {
       video.pause();
@@ -578,7 +640,7 @@ function openPlayer(id, query) {
       const real = t > 0 ? await api(`/api/start/${item.id}?t=${t.toFixed(3)}`).then((r) => r.start, () => t) : 0;
       if (mine !== loads || P.done) return; // a newer seek, or the player closed, while we waited
       P.offset = real;
-      video.src = `/transcode/${item.id}?t=${real.toFixed(3)}&a=${P.audio}`;
+      video.src = `${BASE}/transcode/${item.id}?t=${real.toFixed(3)}&a=${P.audio}`;
     }
     // Autoplay refused by the browser: leave the controls up with the play button waiting.
     video.play().catch(() => { if (mine === loads) { spin.hidden = true; P.loading = false; root.classList.add('paused'); } });
@@ -643,7 +705,7 @@ function openPlayer(id, query) {
     if (P.done) return Promise.resolve();
     const t = position == null ? now() : position;
     if (!(t > 0)) return Promise.resolve();
-    return api(`/api/progress/${item.id}`, { position: t }).catch(() => {});
+    return saveProgress(item, t);
   }
 
   async function goNext() {
@@ -664,7 +726,7 @@ function openPlayer(id, query) {
     drawMenu();
     if (!key) return;
     try {
-      const res = await fetch(`/subs/${item.id}/${key}`);
+      const res = await fetch(`${BASE}/subs/${item.id}/${key}`);
       if (!res.ok) throw new Error();
       const cues = parseVtt(await res.text());
       if (P.sub === key) P.cues = cues;
@@ -711,7 +773,7 @@ function openPlayer(id, query) {
     if (tipImg.dataset.bucket === bucket) return;
     tipImg.dataset.bucket = bucket;
     clearTimeout(previewTimer); // only fetch the frame the pointer settles on
-    previewTimer = setTimeout(() => { tipImg.classList.remove('in'); tipImg.src = `/preview/${item.id}?t=${bucket}`; }, 90);
+    previewTimer = setTimeout(() => { tipImg.classList.remove('in'); tipImg.src = `${BASE}/preview/${item.id}?t=${bucket}`; }, 90);
   }
   scrub.addEventListener('pointermove', (e) => { if (!dur) return; showTip(e); if (P.scrubbing) paint(timeAt(e)); });
   scrub.addEventListener('pointerleave', () => { if (!P.scrubbing) tip.hidden = true; });
@@ -785,7 +847,7 @@ function openPlayer(id, query) {
     if (P.mode === 'direct') { P.mode = 'transcode'; load(t); return; } // let the server convert it instead
     spin.hidden = true;
     msg.hidden = false;
-    msg.textContent = 'This video could not be played. The file may be damaged or use a format ffmpeg cannot read.';
+    msg.textContent = 'This video could not be played right now. The server may be busy converting other videos, or the file may be damaged.';
   });
   video.addEventListener('ended', async () => {
     const finished = !dur || now() > dur * 0.92;
@@ -850,7 +912,8 @@ function openPlayer(id, query) {
   }
   const onLeave = () => {
     if (P.done || !(now() > 0)) return;
-    navigator.sendBeacon(`/api/progress/${item.id}`, new Blob([JSON.stringify({ position: now() })], { type: 'application/json' }));
+    if (S.guest) saveProgress(item, now());
+    else navigator.sendBeacon(`${BASE}/api/progress/${item.id}`, new Blob([JSON.stringify({ position: now() })], { type: 'application/json' }));
   };
   document.addEventListener('keydown', onKey);
   window.addEventListener('pagehide', onLeave);
@@ -998,13 +1061,17 @@ async function rescan() {
 }
 document.getElementById('rescan').addEventListener('click', rescan);
 
+document.getElementById('login').addEventListener('click', showLogin);
+
 document.getElementById('logout').addEventListener('click', async () => {
   await api('/api/logout', {}).catch(() => {});
-  showLogin();
+  refresh().catch(() => {}); // a private library answers with the sign-in page, a public one with the guest view
 });
 
 refresh().catch((err) => {
   if (!document.body.classList.contains('locked')) {
-    app.replaceChildren(h('div', { class: 'empty' }, h('h1', {}, 'Cannot reach SunFlix'), h('p', {}, err.message)));
+    app.replaceChildren(h('div', { class: 'empty' },
+      h('h1', {}, BASE ? 'This library is offline right now' : 'Cannot reach SunFlix'),
+      h('p', {}, BASE ? 'The computer that holds the videos is not answering. Try again in a little while.' : err.message)));
   }
 });

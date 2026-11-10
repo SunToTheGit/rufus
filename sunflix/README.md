@@ -78,6 +78,59 @@ Either the short "API Key" or the long "API Read Access Token" works.
 
 This product uses the TMDB API but is not endorsed or certified by TMDB.
 
+## Sharing it with everyone (a public site)
+
+You can put SunFlix on a public address such as `sunflix.netlify.app` where
+anyone can browse and watch without signing in. The site on Netlify is only
+the pages; **the videos still come from your own computer**, which has to be
+switched on and running SunFlix.
+
+**1. Run your server in public mode**
+
+```bash
+SUNFLIX_PUBLIC=1 \
+SUNFLIX_ALLOW_ORIGIN=https://sunflix.netlify.app \
+SUNFLIX_PASSWORD=something-only-you-know \
+node server.js /path/to/movies /path/to/shows
+```
+
+Visitors are guests: they can watch, but they cannot rescan or change your
+watch history. Their own resume points are kept in their browser. The
+password is optional and only for you, to sign in on the server's own address
+and get the owner controls back.
+
+**2. Give your server an https address**
+
+Browsers will not let an https site load video from a plain http server, so
+your server needs an https address that the internet can reach. A tunnel does
+this without touching your router, for example
+[Tailscale Funnel](https://tailscale.com/kb/1223/funnel) or
+[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/),
+pointed at `http://localhost:8787`.
+
+**3. Put the web app on Netlify**
+
+Create a Netlify site from this repository with:
+
+- **Base directory:** `sunflix`
+- **Environment variable:** `SUNFLIX_SERVER` = the https address from step 2
+
+`netlify.toml` does the rest. Rename the site to `sunflix` in Netlify's site
+settings if that name is free.
+
+Before you share the link:
+
+- **Everything in your library becomes watchable by anyone who has the link.**
+  Only share what you have the right to share publicly. Streaming films and
+  series you do not own the rights to is copyright infringement in most
+  places, and it is your name on the internet connection. For friends and
+  family, leave `SUNFLIX_PUBLIC` off and give them the password instead.
+- Viewers use your upload speed and your computer's processor. At most
+  `SUNFLIX_MAX_TRANSCODES` videos (default 4) are converted at once; further
+  viewers of files that need converting are asked to try again.
+- If your computer is off or the tunnel is down, the site says the library is
+  offline.
+
 ## Player keys
 
 | Key | Does |
@@ -116,6 +169,9 @@ All optional, set as environment variables.
 | `PORT` | `8787` | Port to listen on |
 | `HOST` | `0.0.0.0` | Address to listen on. Use `127.0.0.1` to keep it to this computer |
 | `SUNFLIX_PASSWORD` | none | Require this password to browse or watch |
+| `SUNFLIX_PUBLIC` | off | `1` lets anyone watch without signing in, as a guest (see above) |
+| `SUNFLIX_ALLOW_ORIGIN` | none | Other sites allowed to load this library, e.g. `https://sunflix.netlify.app`. Comma-separated |
+| `SUNFLIX_MAX_TRANSCODES` | `4` | How many videos may be converted at the same time |
 | `TMDB_API_KEY` | none | Look up synopses, cast and artwork on TMDB (see above) |
 | `SUNFLIX_MEDIA` | `./media` | Media folders, separated by `:` (`;` on Windows). Same as passing them as arguments |
 | `SUNFLIX_DATA` | `./data` | Where the library index, watch history and thumbnails are kept |
@@ -150,5 +206,6 @@ lib/library.js   folder scan + ffprobe, cached in data/library.json
 lib/media.js     ffmpeg: thumbnails, subtitle conversion, live transcoding
 lib/tmdb.js      optional TMDB lookup, cached in data/metadata.json
 public/          the web app (plain HTML, CSS and JS, no build step)
+netlify.toml     optional: host the web app on Netlify, pointed at your server
 test/            tests for file name parsing and TMDB matching: npm test
 ```

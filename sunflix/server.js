@@ -21,6 +21,13 @@ const HOST = process.env.HOST || '0.0.0.0';
 const DATA = path.resolve(process.env.SUNFLIX_DATA || path.join(ROOT, 'data'));
 const PASSWORD = process.env.SUNFLIX_PASSWORD || '';
 const RESCAN_MINUTES = Number(process.env.SUNFLIX_RESCAN_MINUTES ?? 30);
+// Public mode: anyone who can reach the server may browse and watch without signing in.
+// Visitors are guests: they cannot rescan or touch the owner's watch history.
+const OPEN = /^(1|true|yes)$/i.test(process.env.SUNFLIX_PUBLIC || '');
+// Other websites allowed to load this library, e.g. the hosted web app on Netlify.
+const ALLOW_ORIGINS = (process.env.SUNFLIX_ALLOW_ORIGIN || '').split(',').map((s) => s.trim().replace(/\/$/, '')).filter(Boolean);
+const MAX_TRANSCODES = Number(process.env.SUNFLIX_MAX_TRANSCODES) || 4;
+let transcodes = 0;
 
 let dirs = process.argv.slice(2);
 if (!dirs.length) dirs = (process.env.SUNFLIX_MEDIA || '').split(path.delimiter).filter(Boolean);
@@ -104,8 +111,8 @@ function continueIds() {
 }
 
 // What the browser gets to know about a video. File paths stay on the server.
-function publicItem(it) {
-  const p = progress[it.id];
+function publicItem(it, guest) {
+  const p = guest ? null : progress[it.id]; // guests keep their own place in their browser
   const meta = tmdb && tmdb.for(it);
   const isEp = it.type === 'episode';
   const ep = isEp && meta ? meta.episodes[`${it.season}x${it.episode}`] : null;
@@ -121,7 +128,7 @@ function publicItem(it) {
     hasLogo: Boolean(artSource(it, 'logo')),
     duration: it.duration, width: it.width, height: it.height,
     vcodec: it.vcodec, size: it.size, addedAt: it.addedAt, playback: it.playback,
-    file: path.basename(it.path), hasPoster: Boolean(artSource(it, 'poster')), hasBackdrop: Boolean(artSource(it, 'backdrop')),
+    file: guest ? undefined : path.basename(it.path), hasPoster: Boolean(artSource(it, 'poster')), hasBackdrop: Boolean(artSource(it, 'backdrop')),
     audio: it.audio,
     subs: [
       ...it.embedded.map((s) => ({ key: `e${s.n}`, lang: s.lang, title: s.title })),
@@ -157,10 +164,15 @@ const sameString = (a, b) => {
   return crypto.timingSafeEqual(ha, hb);
 };
 
-function authed(req) {
-  if (!PASSWORD) return true;
+function signedIn(req) {
   const m = /(?:^|;\s*)sunflix=(\d+)\.([0-9a-f]{64})/.exec(req.headers.cookie || '');
   return Boolean(m) && Number(m[1]) > Date.now() && sameString(m[2], sign(m[1]));
+}
+
+// Who is asking: the owner (full control), a guest (watch only), or nobody we let in.
+function roleOf(req) {
+  if (PASSWORD ? signedIn(req) : !OPEN) return 'owner';
+  return OPEN ? 'guest' : null;
 }
 
 const failures = new Map(); // ip -> [timestamps]
@@ -247,6 +259,12 @@ function sendStatic(req, res, pathname) {
 // ------------------------------------------------------------------ routes
 
 async function handle(req, res) {
+  const from = (req.headers.origin || '').replace(/\/$/, '');
+  if (from && ALLOW_ORIGINS.includes(from)) {
+    // Lets the hosted web app read this library. No cookies are shared, so it is always a guest there.
+    res.setHeader('Access-Control-Allow-Origin', from);
+    res.setHeader('Vary', 'Origin');
+  }
   const url = new URL(req.url, 'http://localhost');
   let pathname;
   try { pathname = decodeURIComponent(url.pathname); } catch { return json(res, 400, { error: 'bad path' }); }
@@ -279,7 +297,11 @@ async function handle(req, res) {
 
   const isMedia = ['api', 'stream', 'transcode', 'subs', 'art', 'preview'].includes(area);
   if (!isMedia) return sendStatic(req, res, pathname);
-  if (!authed(req)) return json(res, 401, { error: 'login required' });
+  const role = roleOf(req);
+  if (!role) return json(res, 401, { error: 'login required' });
+  const guest = role === 'guest';
+  // Guests only read. Everything that changes the server is the owner's.
+  if (guest && method === 'POST') return json(res, 403, { error: 'Sign in to do that.' });
 
   if (area === 'api') {
     if (a === 'logout' && method === 'POST') {
@@ -287,13 +309,15 @@ async function handle(req, res) {
     }
     if (a === 'library' && method === 'GET') {
       return json(res, 200, {
-        items: lib.all().map(publicItem),
-        continue: continueIds(),
+        items: lib.all().map((it) => publicItem(it, guest)),
+        continue: guest ? [] : continueIds(),
+        guest,
+        canLogin: guest && Boolean(PASSWORD),
         status: lib.status,
         shows: showMeta(),
         metadata: tmdb ? tmdb.status : null,
-        mediaDirs: dirs,
-        canLogout: Boolean(PASSWORD),
+        mediaDirs: guest ? [] : dirs,
+        canLogout: !guest && Boolean(PASSWORD),
       });
     }
     if (a === 'scan' && method === 'POST') {
@@ -360,14 +384,20 @@ async function handle(req, res) {
     const start = Math.max(0, Number(url.searchParams.get('t')) || 0);
     let audio = Number(url.searchParams.get('a')) || 0;
     if (!Number.isInteger(audio) || audio < 0 || audio >= item.audio.length) audio = 0;
+    if (method === 'HEAD') { res.writeHead(200, { 'Content-Type': 'video/mp4', 'Cache-Control': 'no-store' }); return res.end(); }
+    // Converting video is the expensive part, so only so many viewers can do it at once.
+    if (transcodes >= MAX_TRANSCODES) return json(res, 503, { error: 'The server is busy converting other videos.' }, { 'Retry-After': '20' });
+    transcodes++;
+    let released = false;
+    const release = () => { if (!released) { released = true; transcodes--; } };
     res.writeHead(200, { 'Content-Type': 'video/mp4', 'Cache-Control': 'no-store' });
-    if (method === 'HEAD') return res.end();
     const ff = media.transcode(item, start, audio);
     let errText = '';
     ff.stderr.on('data', (d) => { if (errText.length < 2000) errText += d; });
     ff.stdout.pipe(res);
-    ff.on('error', () => res.destroy());
+    ff.on('error', () => { release(); res.destroy(); });
     ff.on('close', (code) => {
+      release();
       if (code && !res.destroyed) console.error(`[transcode] ${path.basename(item.path)}: ${errText.trim().split('\n').pop()}`);
     });
     res.on('close', () => ff.kill('SIGKILL'));
@@ -387,7 +417,9 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`SunFlix is up: http://localhost:${PORT}`);
   console.log(`Media folders:\n${dirs.map((d) => `  ${d}`).join('\n')}`);
-  if (!PASSWORD) console.log('No password set. Anyone on your network can watch. Set SUNFLIX_PASSWORD to lock it.');
+  if (OPEN) console.log(`Public mode: anyone who can reach this server can watch without signing in.${PASSWORD ? ' Sign in with the password for owner controls.' : ''}`);
+  else if (!PASSWORD) console.log('No password set. Anyone on your network can watch. Set SUNFLIX_PASSWORD to lock it.');
+  if (ALLOW_ORIGINS.length) console.log(`Also serving the web app at: ${ALLOW_ORIGINS.join(', ')}`);
   console.log(tmdb ? 'Looking up titles on TMDB.' : 'No TMDB_API_KEY set. Titles and artwork come from your files only.');
   rescan();
   if (RESCAN_MINUTES > 0) setInterval(rescan, RESCAN_MINUTES * 60000).unref();
