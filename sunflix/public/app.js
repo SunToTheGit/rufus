@@ -936,8 +936,13 @@ async function render() {
     onScroll();
   };
   // Cross-fade between pages; a refresh of the same page or a search keystroke swaps instantly.
-  if (document.startViewTransition && !samePage && page !== 'search' && !reducedMotion) document.startViewTransition(swap);
-  else swap();
+  if (document.startViewTransition && !samePage && page !== 'search' && !reducedMotion) {
+    // A second navigation cuts the first cross-fade short, which the browser reports as a
+    // rejection. The page is swapped either way, so there is nothing to handle.
+    const fade = document.startViewTransition(swap);
+    fade.ready.catch(() => {});
+    fade.finished.catch(() => {});
+  } else swap();
 }
 
 const topBar = document.getElementById('top');
