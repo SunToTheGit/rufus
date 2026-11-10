@@ -60,6 +60,18 @@ class Media {
     ]));
   }
 
+  // A small frame for the timeline's hover preview. Times are snapped to a bucket so one
+  // video never produces more than about 240 of them.
+  preview(item, t) {
+    const step = Math.max(10, Math.ceil(item.duration / 240));
+    const at = Math.max(0, Math.min(Math.floor(t / step) * step, Math.max(0, item.duration - 1)));
+    const out = path.join(this.thumbDir, `${item.id}-pv-${at}-${item.mtime}.jpg`);
+    return this._cached(out, (tmp) => run('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-nostdin', '-ss', String(at), '-i', item.path,
+      '-map', `0:${item.vindex}`, '-frames:v', '1', '-vf', 'scale=240:-2', '-q:v', '6', '-y', tmp,
+    ], 30000));
+  }
+
   // key is "e<n>" for the nth embedded text track or "s<n>" for the nth sidecar file.
   subtitles(item, key) {
     const m = /^([es])(\d+)$/.exec(key);

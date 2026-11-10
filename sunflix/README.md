@@ -8,6 +8,8 @@ enough to read in one sitting.
 
 ![Poster shelves with keyboard focus](docs/shelves.jpg)
 
+![Player with the up-next card](docs/player.jpg)
+
 *The titles and artwork in these screenshots are made up for the demo.*
 
 ## Run it
@@ -41,8 +43,24 @@ With no folders given, SunFlix watches a `media/` folder next to `server.js`.
 - **Built for the couch** – a full-screen spotlight of what to watch next, poster
   shelves, and arrow-key navigation between titles so a keyboard or remote is
   enough.
-- **Search**, player shortcuts (space, ← →, F, M, Esc), phone-friendly layout.
+- **A proper player** – preview frames as you scrub, an audio and subtitles menu
+  that remembers your subtitle language, a title card on pause, and an up-next
+  card you can accept or decline.
+- **Search** and a phone-friendly layout.
 - **Optional password** for the whole site.
+
+## Player keys
+
+| Key | Does |
+| --- | --- |
+| Space or K | Play / pause |
+| ← → | Back / forward 10 seconds |
+| ↑ ↓ | Volume |
+| 0–9 | Jump to 0%–90% |
+| C | Subtitles on / off |
+| M | Mute |
+| F | Fullscreen |
+| Esc | Leave the player |
 
 ## Naming your files
 

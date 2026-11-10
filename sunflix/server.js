@@ -238,7 +238,7 @@ async function handle(req, res) {
     });
   }
 
-  const isMedia = ['api', 'stream', 'transcode', 'subs', 'art'].includes(area);
+  const isMedia = ['api', 'stream', 'transcode', 'subs', 'art', 'preview'].includes(area);
   if (!isMedia) return sendStatic(req, res, pathname);
   if (!authed(req)) return json(res, 401, { error: 'login required' });
 
@@ -295,6 +295,14 @@ async function handle(req, res) {
       return sendFile(req, res, file, 'private, max-age=86400');
     } catch {
       return json(res, 404, { error: 'no artwork' });
+    }
+  }
+
+  if (area === 'preview') {
+    try {
+      return sendFile(req, res, await media.preview(item, Number(url.searchParams.get('t')) || 0), 'private, max-age=86400');
+    } catch {
+      return json(res, 404, { error: 'no preview' });
     }
   }
 
