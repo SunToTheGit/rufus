@@ -4,7 +4,11 @@ Your own little streaming site. Point it at a folder of videos and it gives you
 a browsable library with a player, in the spirit of Jellyfin and Plex, but small
 enough to read in one sitting.
 
-![SunFlix home screen](docs/home.png)
+![SunFlix home screen](docs/home.jpg)
+
+![Poster shelves with keyboard focus](docs/shelves.jpg)
+
+*The titles and artwork in these screenshots are made up for the demo.*
 
 ## Run it
 
@@ -31,9 +35,13 @@ With no folders given, SunFlix watches a `media/` folder next to `server.js`.
   row, and the next episode queued up when you finish one.
 - **Subtitles and audio tracks** – `.srt`/`.vtt`/`.ass` files next to the video
   and text subtitles inside it; switch audio language in the player.
-- **Artwork** – uses `poster.jpg` / `backdrop.jpg` if they sit next to your
-  files, otherwise grabs a frame from the video.
-- **Search**, keyboard shortcuts (space, ← →, F, M, Esc), phone-friendly layout.
+- **Artwork** – uses `poster.jpg` and `backdrop.jpg` if they sit next to your
+  files (in the movie's folder, or the show's folder). Without them it grabs a
+  frame from the video and sets the title on it.
+- **Built for the couch** – a full-screen spotlight of what to watch next, poster
+  shelves, and arrow-key navigation between titles so a keyboard or remote is
+  enough.
+- **Search**, player shortcuts (space, ← →, F, M, Esc), phone-friendly layout.
 - **Optional password** for the whole site.
 
 ## Naming your files

@@ -94,7 +94,7 @@ function publicItem(it) {
     show: it.show, showKey: it.showKey, season: it.season, episode: it.episode,
     duration: it.duration, width: it.width, height: it.height,
     vcodec: it.vcodec, size: it.size, addedAt: it.addedAt, playback: it.playback,
-    file: path.basename(it.path), hasPoster: Boolean(it.poster),
+    file: path.basename(it.path), hasPoster: Boolean(it.poster), hasBackdrop: Boolean(it.backdrop),
     audio: it.audio,
     subs: [
       ...it.embedded.map((s) => ({ key: `e${s.n}`, lang: s.lang, title: s.title })),
@@ -287,10 +287,10 @@ async function handle(req, res) {
   if (area === 'stream') return sendFile(req, res, item.path, 'private, max-age=0');
 
   if (area === 'art') {
-    const kind = url.searchParams.get('kind');
+    const kind = ['poster', 'backdrop'].includes(url.searchParams.get('kind')) ? url.searchParams.get('kind') : 'frame';
+    const width = [400, 640, 1920].includes(Number(url.searchParams.get('w'))) ? Number(url.searchParams.get('w')) : 640;
     try {
-      let file = kind === 'poster' ? item.poster : kind === 'backdrop' ? item.backdrop : null;
-      if (!file && kind !== 'poster') file = await media.thumb(item);
+      const file = await media.art(item, kind, width);
       if (!file) return json(res, 404, { error: 'no artwork' });
       return sendFile(req, res, file, 'private, max-age=86400');
     } catch {

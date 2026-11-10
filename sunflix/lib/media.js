@@ -40,13 +40,23 @@ class Media {
     return this.pending.get(out);
   }
 
-  // A frame from 10% into the video, used wherever there is no artwork on disk.
-  thumb(item) {
-    const out = path.join(this.thumbDir, `${item.id}-${item.mtime}.jpg`);
+  // Artwork for a video, resized to `width` and cached. `kind` is "poster", "backdrop" or
+  // "frame". Posters only exist when one is on disk; a missing backdrop falls back to a
+  // frame from 10% into the video.
+  async art(item, kind, width) {
+    const src = kind === 'poster' ? item.poster : kind === 'backdrop' ? item.backdrop : null;
+    if (kind === 'poster' && !src) return null;
+    const base = ['-hide_banner', '-loglevel', 'error', '-nostdin'];
+    const scale = ['-frames:v', '1', '-vf', `scale='min(${width},iw)':-2`, '-q:v', '3', '-y'];
+    if (src) {
+      const stamp = Math.floor((await fsp.stat(src)).mtimeMs);
+      const out = path.join(this.thumbDir, `${item.id}-${kind}-${width}-${stamp}.jpg`);
+      return this._cached(out, (tmp) => run('ffmpeg', [...base, '-i', src, ...scale, tmp]));
+    }
+    const out = path.join(this.thumbDir, `${item.id}-frame-${width}-${item.mtime}.jpg`);
     const at = item.duration ? Math.min(item.duration * 0.1, 300) : 0;
     return this._cached(out, (tmp) => run('ffmpeg', [
-      '-hide_banner', '-loglevel', 'error', '-nostdin', '-ss', at.toFixed(2), '-i', item.path,
-      '-map', `0:${item.vindex}`, '-frames:v', '1', '-vf', 'scale=640:-2', '-q:v', '4', '-y', tmp,
+      ...base, '-ss', at.toFixed(2), '-i', item.path, '-map', `0:${item.vindex}`, ...scale, tmp,
     ]));
   }
 
