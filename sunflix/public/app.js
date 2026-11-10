@@ -96,15 +96,21 @@ async function loadLibrary() {
     show.addedAt = Math.max(show.addedAt, it.addedAt);
     show.year = show.year || it.year;
   }
-  for (const show of S.shows.values()) show.episodes.sort((a, b) => a.season - b.season || a.episode - b.episode);
+  for (const show of S.shows.values()) {
+    show.episodes.sort((a, b) => a.season - b.season || a.episode - b.episode);
+    Object.assign(show, lib.shows[show.key]); // synopsis, cast and so on, when TMDB lookup is on
+  }
+  S.meta = lib.metadata;
   S.loaded = true;
   document.getElementById('logout').hidden = !lib.canLogout;
   const btn = document.getElementById('rescan');
+  const looking = Boolean(S.meta && S.meta.busy);
   btn.disabled = lib.status.scanning;
-  btn.classList.toggle('busy', lib.status.scanning);
-  btn.title = lib.status.scanning ? `Scanning ${lib.status.done} of ${lib.status.total}` : 'Look for new files';
+  btn.classList.toggle('busy', lib.status.scanning || looking);
+  btn.title = lib.status.scanning ? `Scanning ${lib.status.done} of ${lib.status.total}`
+    : looking ? `Fetching details for ${S.meta.done} of ${S.meta.total} titles` : 'Look for new files';
   clearTimeout(pollTimer);
-  if (lib.status.scanning) pollTimer = setTimeout(() => refresh().catch(() => {}), 1500);
+  if (lib.status.scanning || looking) pollTimer = setTimeout(() => refresh().catch(() => {}), 1500);
 }
 
 async function refresh() {
@@ -195,8 +201,10 @@ function hero(slides, detail) {
     if (pager) [...pager.children].forEach((dot, j) => dot.classList.toggle('on', j === i));
     info.replaceChildren(...[
       s.eyebrow ? h('div', { class: 'eyebrow' }, s.eyebrow) : null,
-      h('h1', {}, s.title),
+      // Title art when TMDB has it, plain text otherwise (and if the image fails to load).
+      h('h1', {}, s.logo ? h('img', { src: s.logo, alt: s.title, onerror: (e) => e.target.replaceWith(s.title) }) : s.title),
       h('div', { class: 'meta' }, s.meta),
+      s.overview ? h('p', { class: 'overview' }, s.overview) : null,
       h('div', { class: 'actions' }, s.actions),
     ].filter(Boolean));
     info.classList.remove('swap');
@@ -221,8 +229,19 @@ function playButton(it, label) {
   return h('a', { class: 'btn primary', href: `#/play/${it.id}`, html: ICON.play }, text);
 }
 
+// Rating and genres, for a movie or a show, when TMDB lookup is on.
+function acclaim(x) {
+  return [
+    x.rating ? h('span', { class: 'rating', title: 'TMDB user score' }, `★ ${x.rating.toFixed(1)}`) : null,
+    x.genres && x.genres.length ? h('span', {}, x.genres.slice(0, 2).join(' · ')) : null,
+  ];
+}
+
+const logoOf = (it) => (it.hasLogo ? art(it.id, 'logo', 640) : null);
+
 function itemMeta(it) {
   return [
+    ...acclaim(it),
     it.year ? h('span', {}, String(it.year)) : null,
     h('span', {}, runtime(it.duration)),
     h('span', { class: 'tag' }, quality(it)),
@@ -238,14 +257,15 @@ function slideFor(it, eyebrow) {
   if (it.type === 'episode') {
     const show = S.shows.get(it.showKey);
     return {
-      bg: art(show.episodes[0].id, 'backdrop', 1920), eyebrow, title: show.name,
-      meta: [h('span', {}, `${epCode(it)} · ${it.title}`), h('span', {}, runtime(it.duration)), h('span', { class: 'tag' }, quality(it))],
+      bg: art(show.episodes[0].id, 'backdrop', 1920), eyebrow, title: show.name, logo: logoOf(show.episodes[0]),
+      overview: it.overview || show.overview,
+      meta: [...acclaim(show), h('span', {}, `${epCode(it)} · ${it.title}`), h('span', {}, runtime(it.duration)), h('span', { class: 'tag' }, quality(it))],
       actions: [playButton(it, it.position > 15 ? `Resume ${epCode(it)}` : `Play ${epCode(it)}`),
         h('a', { class: 'btn', href: `#/show/${show.key}` }, 'Episodes')],
     };
   }
   return {
-    bg: art(it.id, 'backdrop', 1920), eyebrow, title: it.title, meta: itemMeta(it),
+    bg: art(it.id, 'backdrop', 1920), eyebrow, title: it.title, logo: logoOf(it), overview: it.overview, meta: itemMeta(it),
     actions: [playButton(it), h('a', { class: 'btn', href: `#/item/${it.id}` }, 'Details')],
   };
 }
@@ -261,6 +281,21 @@ function emptyState() {
         h('p', {}, 'Name movies like “Title (2021).mkv” and episodes like “Show S01E02.mkv” so they sort themselves out.'),
         h('div', { class: 'actions', style: 'justify-content:center' },
           h('button', { class: 'btn primary', type: 'button', onclick: rescan }, 'Look again now'))]);
+}
+
+// A shelf for each of the biggest genres, once a genre has enough titles to be worth a row.
+function genreShelves(allMovies, allShows) {
+  const byGenre = new Map();
+  const add = (x, card) => {
+    for (const g of x.genres || []) {
+      if (!byGenre.has(g)) byGenre.set(g, []);
+      byGenre.get(g).push({ card, addedAt: x.addedAt });
+    }
+  };
+  for (const m of allMovies) add(m, () => movieCard(m));
+  for (const s of allShows) add(s, () => showCard(s));
+  return [...byGenre].filter(([, list]) => list.length >= 4).sort((a, b) => b[1].length - a[1].length).slice(0, 4)
+    .map(([genre, list]) => shelf(genre, list.sort((a, b) => b.addedAt - a.addedAt).slice(0, 24).map((x) => x.card())));
 }
 
 const titleKey = (it) => (it.type === 'episode' ? `s:${it.showKey}` : it.id);
@@ -292,6 +327,7 @@ function viewHome() {
     hero(slides),
     shelf('Continue watching', S.cont.map(playCard), { wide: true }),
     shelf('Recently added', newest.slice(0, 18).map((it) => (it.type === 'episode' ? showCard(S.shows.get(it.showKey)) : movieCard(it)))),
+    genreShelves(allMovies, allShows),
     shelf('Movies', allMovies.slice(0, 30).map(movieCard), { href: '#/movies' }),
     shelf('Shows', allShows.slice(0, 30).map(showCard), { href: '#/shows' }),
   ];
@@ -307,13 +343,26 @@ function facts(it) {
   const tracks = (list) => list.map((t, i) => langLabel(t, `Track ${i + 1}`)).join(', ');
   const codec = { h264: 'H.264', hevc: 'HEVC', vp9: 'VP9', vp8: 'VP8', av1: 'AV1', mpeg4: 'MPEG-4', mpeg2video: 'MPEG-2' }[it.vcodec] || (it.vcodec || '').toUpperCase();
   const named = it.audio.length > 1 || it.audio.some((a) => a.title || (a.lang && a.lang !== 'und'));
+  const list = (xs) => (xs && xs.length ? xs.join(', ') : null);
   const rows = [
+    list(it.directors) ? [it.directors.length > 1 ? 'Directors' : 'Director', list(it.directors)] : null,
+    list(it.cast) ? ['Cast', list(it.cast)] : null,
+    list(it.genres) ? ['Genres', list(it.genres)] : null,
     ['Video', `${it.width}×${it.height} · ${codec}${it.playback === 'direct' ? '' : it.playback === 'remux' ? ' · repackaged as you watch' : ' · converted as you watch'}`],
     named ? ['Audio', tracks(it.audio)] : null,
     it.subs.length ? ['Subtitles', tracks(it.subs)] : null,
     ['File', it.file],
   ];
   return h('dl', { class: 'facts' }, rows.filter(Boolean).map(([k, v]) => h('div', {}, h('dt', {}, k), h('dd', {}, v))));
+}
+
+function showFacts(show) {
+  const rows = [
+    show.creators && show.creators.length ? ['Created by', show.creators.join(', ')] : null,
+    show.cast && show.cast.length ? ['Cast', show.cast.join(', ')] : null,
+    show.genres && show.genres.length ? ['Genres', show.genres.join(', ')] : null,
+  ].filter(Boolean);
+  return rows.length ? h('dl', { class: 'facts' }, rows.map(([k, v]) => h('div', {}, h('dt', {}, k), h('dd', {}, v)))) : null;
 }
 
 function viewItem(id) {
@@ -325,8 +374,10 @@ function viewItem(id) {
   return [
     hero([{
       bg: art(isEp ? S.shows.get(it.showKey).episodes[0].id : it.id, 'backdrop', 1920),
-      eyebrow: isEp ? `${it.show} · ${epCode(it)}` : null,
+      eyebrow: isEp ? `${it.show} · ${epCode(it)}` : it.tagline || null,
       title: it.title,
+      logo: isEp ? null : logoOf(it),
+      overview: it.overview,
       meta: itemMeta(it),
       actions: [
         playButton(it),
@@ -353,7 +404,9 @@ function viewShow(key, query) {
     hero([{
       bg: art(show.episodes[0].id, 'backdrop', 1920),
       title: show.name,
-      meta: [show.year ? h('span', {}, String(show.year)) : null,
+      logo: logoOf(show.episodes[0]),
+      overview: show.overview,
+      meta: [...acclaim(show), show.year ? h('span', {}, String(show.year)) : null,
         h('span', {}, plural(seasons.length, 'season')), h('span', {}, plural(show.episodes.length, 'episode'))],
       actions: [playButton(up, up.position > 15 ? `Resume ${epCode(up)}` : `Play ${epCode(up)}`)],
     }], true),
@@ -365,7 +418,9 @@ function viewShow(key, query) {
         h('div', { class: 'art' }, picture(art(e.id, 'frame', 640)), h('div', { class: 'glyph', html: ICON.play }), progressBar(e)),
         h('div', {},
           h('h3', {}, e.title, e.watched ? h('span', { class: 'check' }, ' ✓') : null),
-          h('p', {}, e.position > 15 ? `${runtime(e.duration - e.position)} left` : runtime(e.duration)))))),
+          h('p', {}, e.position > 15 ? `${runtime(e.duration - e.position)} left` : runtime(e.duration)),
+          e.overview ? h('p', { class: 'synopsis' }, e.overview) : null)))),
+    showFacts(show),
     shelf('More shows', others.slice(0, 24).map(showCard), { href: '#/shows' }),
   ];
 }
@@ -374,7 +429,9 @@ function viewSearch(q) {
   const needle = q.trim().toLowerCase();
   if (!needle) return viewHome();
   const hit = (s) => (s || '').toLowerCase().includes(needle);
-  const titles = [...[...S.shows.values()].filter((show) => hit(show.name)).map(showCard), ...movies().filter((it) => hit(it.title)).map(movieCard)];
+  const about = (x) => [...(x.genres || []), ...(x.cast || []), ...(x.directors || []), ...(x.creators || [])].some(hit);
+  const titles = [...[...S.shows.values()].filter((show) => hit(show.name) || about(show)).map(showCard),
+    ...movies().filter((it) => hit(it.title) || about(it)).map(movieCard)];
   const eps = S.items.filter((it) => it.type === 'episode' && hit(it.title)).slice(0, 40).map(playCard);
   return [h('h1', { class: 'page-title' }, `Results for “${q.trim()}”`),
     titles.length ? h('div', { class: 'grid' }, titles) : null,
@@ -465,7 +522,7 @@ function openPlayer(id, query) {
   const infoLeft = h('p', {});
   const info = div('pinfo',
     h('div', { class: 'eyebrow' }, isEp ? `${item.show} · ${epCode(item)}` : (item.year ? String(item.year) : '')),
-    h('h2', {}, item.title), infoLeft);
+    h('h2', {}, item.title), infoLeft, item.overview ? h('p', { class: 'synopsis' }, item.overview) : null);
 
   const menu = h('div', { class: 'pmenu', role: 'menu', hidden: true });
   const menuBtn = item.subs.length || item.audio.length > 1 ? button('Audio and subtitles', ICON.cc, () => {
@@ -872,7 +929,8 @@ async function render() {
   render.last = route;
   const swap = () => {
     const keep = window.scrollY;
-    app.replaceChildren(...[view].flat(Infinity).filter(Boolean));
+    app.replaceChildren(...[view].flat(Infinity).filter(Boolean),
+      ...(S.meta ? [h('footer', { class: 'credit' }, 'Film and series details from TMDB. This product uses the TMDB API but is not endorsed or certified by TMDB.')] : []));
     document.body.classList.toggle('has-hero', Boolean(app.querySelector(':scope > .hero')));
     window.scrollTo(0, samePage ? keep : 0);
     onScroll();

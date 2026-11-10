@@ -12,6 +12,7 @@ const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const { Library, readJson, writeJson } = require('./lib/library');
 const { Media } = require('./lib/media');
+const { Tmdb } = require('./lib/tmdb');
 
 const ROOT = __dirname;
 const PUBLIC = path.join(ROOT, 'public');
@@ -39,6 +40,22 @@ for (const tool of ['ffmpeg', 'ffprobe']) {
 fs.mkdirSync(DATA, { recursive: true });
 const lib = new Library({ dirs, dataDir: DATA });
 const media = new Media(DATA);
+const tmdb = process.env.TMDB_API_KEY
+  ? new Tmdb({ key: process.env.TMDB_API_KEY.trim(), dataDir: DATA, apiUrl: process.env.TMDB_API_URL, imageUrl: process.env.TMDB_IMAGE_URL })
+  : null;
+
+// Scan the folders, then look up anything new on TMDB when that is switched on.
+function rescan() {
+  return lib.scan().then(() => tmdb && tmdb.sync(lib.all()));
+}
+
+// Artwork next to the files wins; TMDB fills the gaps.
+function artSource(it, kind) {
+  const meta = tmdb && tmdb.for(it);
+  if (kind === 'logo') return meta ? meta.logo : null;
+  if (kind === 'frame') return null;
+  return it[kind] || (meta ? meta[kind] : null);
+}
 
 // ---------------------------------------------------------------- progress
 
@@ -89,12 +106,22 @@ function continueIds() {
 // What the browser gets to know about a video. File paths stay on the server.
 function publicItem(it) {
   const p = progress[it.id];
+  const meta = tmdb && tmdb.for(it);
+  const isEp = it.type === 'episode';
+  const ep = isEp && meta ? meta.episodes[`${it.season}x${it.episode}`] : null;
   return {
-    id: it.id, type: it.type, title: it.title, year: it.year,
-    show: it.show, showKey: it.showKey, season: it.season, episode: it.episode,
+    id: it.id, type: it.type,
+    title: isEp ? (ep && ep.title) || it.title : (meta && meta.title) || it.title,
+    year: (meta && meta.year) || it.year,
+    show: isEp ? (meta && meta.title) || it.show : undefined,
+    showKey: it.showKey, season: it.season, episode: it.episode,
+    // Episodes carry their own synopsis; everything about the show is sent once, in `shows`.
+    overview: isEp ? (ep && ep.overview) || '' : meta ? meta.overview : '',
+    ...(meta && !isEp ? { tagline: meta.tagline, genres: meta.genres, rating: meta.rating, cast: meta.cast, directors: meta.directors } : {}),
+    hasLogo: Boolean(artSource(it, 'logo')),
     duration: it.duration, width: it.width, height: it.height,
     vcodec: it.vcodec, size: it.size, addedAt: it.addedAt, playback: it.playback,
-    file: path.basename(it.path), hasPoster: Boolean(it.poster), hasBackdrop: Boolean(it.backdrop),
+    file: path.basename(it.path), hasPoster: Boolean(artSource(it, 'poster')), hasBackdrop: Boolean(artSource(it, 'backdrop')),
     audio: it.audio,
     subs: [
       ...it.embedded.map((s) => ({ key: `e${s.n}`, lang: s.lang, title: s.title })),
@@ -103,6 +130,18 @@ function publicItem(it) {
     position: p ? p.position : 0,
     watched: Boolean(p && p.watched),
   };
+}
+
+// Show-level details, keyed like the client groups episodes.
+function showMeta() {
+  const out = {};
+  if (!tmdb) return out;
+  for (const it of lib.all()) {
+    if (it.type !== 'episode' || out[it.showKey]) continue;
+    const m = tmdb.for(it);
+    if (m) out[it.showKey] = { overview: m.overview, tagline: m.tagline, genres: m.genres, rating: m.rating, cast: m.cast, creators: m.creators };
+  }
+  return out;
 }
 
 // -------------------------------------------------------------------- auth
@@ -251,12 +290,14 @@ async function handle(req, res) {
         items: lib.all().map(publicItem),
         continue: continueIds(),
         status: lib.status,
+        shows: showMeta(),
+        metadata: tmdb ? tmdb.status : null,
         mediaDirs: dirs,
         canLogout: Boolean(PASSWORD),
       });
     }
     if (a === 'scan' && method === 'POST') {
-      lib.scan();
+      rescan();
       return json(res, 202, { status: lib.status });
     }
     const item = b ? lib.get(b) : null;
@@ -287,10 +328,11 @@ async function handle(req, res) {
   if (area === 'stream') return sendFile(req, res, item.path, 'private, max-age=0');
 
   if (area === 'art') {
-    const kind = ['poster', 'backdrop'].includes(url.searchParams.get('kind')) ? url.searchParams.get('kind') : 'frame';
+    const kind = ['poster', 'backdrop', 'logo'].includes(url.searchParams.get('kind')) ? url.searchParams.get('kind') : 'frame';
     const width = [400, 640, 1920].includes(Number(url.searchParams.get('w'))) ? Number(url.searchParams.get('w')) : 640;
     try {
-      const file = await media.art(item, kind, width);
+      // Title logos are transparent PNGs, so they are sent as they are instead of being re-encoded.
+      const file = kind === 'logo' ? artSource(item, 'logo') : await media.art(item, kind, width, artSource(item, kind));
       if (!file) return json(res, 404, { error: 'no artwork' });
       return sendFile(req, res, file, 'private, max-age=86400');
     } catch {
@@ -346,6 +388,7 @@ server.listen(PORT, HOST, () => {
   console.log(`SunFlix is up: http://localhost:${PORT}`);
   console.log(`Media folders:\n${dirs.map((d) => `  ${d}`).join('\n')}`);
   if (!PASSWORD) console.log('No password set. Anyone on your network can watch. Set SUNFLIX_PASSWORD to lock it.');
-  lib.scan();
-  if (RESCAN_MINUTES > 0) setInterval(() => lib.scan(), RESCAN_MINUTES * 60000).unref();
+  console.log(tmdb ? 'Looking up titles on TMDB.' : 'No TMDB_API_KEY set. Titles and artwork come from your files only.');
+  rescan();
+  if (RESCAN_MINUTES > 0) setInterval(rescan, RESCAN_MINUTES * 60000).unref();
 });

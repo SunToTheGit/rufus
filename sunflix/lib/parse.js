@@ -13,8 +13,17 @@ const TAGS = new RegExp(
   'hdtv|dvdrip|remux|x26[45]|h[ .]?26[45]|hevc|avc|xvid|divx|aac|ac3|dts|ddp?[ .]?5[ .]1|atmos|' +
   'proper|repack|extended|unrated|remastered|imax|multi|10bit)\\b', 'i');
 
+// "Title (2020) {tmdb-603}" or "[tmdbid-603]" in a file or folder name pins the TMDB match.
+function tmdbHint(...names) {
+  for (const name of names) {
+    const m = /[[{]tmdb(?:id)?[-=](\d+)[\]}]/i.exec(name);
+    if (m) return Number(m[1]);
+  }
+  return null;
+}
+
 function clean(s) {
-  s = s.replace(/\[[^\]]*\]/g, ' ').replace(/_+/g, ' ');
+  s = s.replace(/\[[^\]]*\]|\{[^}]*\}/g, ' ').replace(/_+/g, ' ');
   // Scene-style names use dots for spaces; names with real spaces keep theirs ("Mr. Robot").
   if (!/\s/.test(s.trim())) s = s.replace(/\.+/g, ' ');
   return s.replace(/\s+/g, ' ').trim();
@@ -45,7 +54,7 @@ function parseSeasonDir(name) {
 }
 
 function slug(s) {
-  return s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'unknown';
+  return s.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'unknown';
 }
 
 function parseMedia(filePath) {
@@ -81,13 +90,14 @@ function parseMedia(filePath) {
       season: Number(season),
       episode: Number(episode),
       title: trimEdges(cutTags(rest)) || `Episode ${Number(episode)}`,
+      tmdbId: tmdbHint(path.basename(showDir), base),
       showDir,
     };
   }
 
   const movie = splitYear(trimEdges(cutTags(name)));
   if (!movie.year) movie.year = splitYear(clean(parent)).year;
-  return { type: 'movie', title: movie.title || base, year: movie.year };
+  return { type: 'movie', title: movie.title || base, year: movie.year, tmdbId: tmdbHint(base, parent) };
 }
 
 module.exports = { VIDEO_EXT, parseMedia, clean, slug };

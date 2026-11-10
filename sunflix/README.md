@@ -47,7 +47,36 @@ With no folders given, SunFlix watches a `media/` folder next to `server.js`.
   that remembers your subtitle language, a title card on pause, and an up-next
   card you can accept or decline.
 - **Search** and a phone-friendly layout.
+- **Film and series details** (optional) – synopses, cast, ratings, genres,
+  posters and title art from TMDB, plus genre rows on the home page.
 - **Optional password** for the whole site.
+
+## Details from TMDB
+
+Out of the box SunFlix knows only what your file names tell it. Give it a free
+[TMDB](https://www.themoviedb.org) API key and it fills in the rest:
+
+1. Create a TMDB account, then request an API key under
+   [Settings → API](https://www.themoviedb.org/settings/api).
+2. Start SunFlix with it:
+
+   ```bash
+   TMDB_API_KEY=your-key node server.js /path/to/movies /path/to/shows
+   ```
+
+Either the short "API Key" or the long "API Read Access Token" works.
+
+- Each title is looked up once and kept in `data/metadata.json`, with images in
+  `data/tmdb/`. Delete those to start over.
+- Only the title and year are sent to TMDB, never file names or paths. With no
+  key set, nothing is sent anywhere.
+- Artwork you put next to your files (`poster.jpg`, `backdrop.jpg`) still wins.
+- A title with no confident match is left alone and tried again a week later.
+- Wrong match, or no match? Put the TMDB id in the folder or file name and it
+  will be used as is: `Heat (1995) {tmdb-949}/Heat.mkv`. The id is the number
+  in the title's TMDB web address.
+
+This product uses the TMDB API but is not endorsed or certified by TMDB.
 
 ## Player keys
 
@@ -87,6 +116,7 @@ All optional, set as environment variables.
 | `PORT` | `8787` | Port to listen on |
 | `HOST` | `0.0.0.0` | Address to listen on. Use `127.0.0.1` to keep it to this computer |
 | `SUNFLIX_PASSWORD` | none | Require this password to browse or watch |
+| `TMDB_API_KEY` | none | Look up synopses, cast and artwork on TMDB (see above) |
 | `SUNFLIX_MEDIA` | `./media` | Media folders, separated by `:` (`;` on Windows). Same as passing them as arguments |
 | `SUNFLIX_DATA` | `./data` | Where the library index, watch history and thumbnails are kept |
 | `SUNFLIX_RESCAN_MINUTES` | `30` | How often to look for new files. `0` turns it off; the Rescan button always works |
@@ -108,8 +138,8 @@ SUNFLIX_PASSWORD=opensesame PORT=9000 node server.js /mnt/media
   Files that play directly (MP4 with H.264 and AAC) work everywhere.
 - Picture-based subtitles (Blu-ray PGS, DVD) are not shown, only text ones.
 - One watch history is shared by everyone; there are no separate profiles yet.
-- Titles come from file names. Nothing is looked up online, so there are no
-  plot summaries or cast lists.
+- Without a TMDB key, titles come from file names and there are no plot
+  summaries or cast lists.
 
 ## How it is put together
 
@@ -118,6 +148,7 @@ server.js        HTTP server, routes, login, watch history
 lib/parse.js     file name -> movie / show / season / episode
 lib/library.js   folder scan + ffprobe, cached in data/library.json
 lib/media.js     ffmpeg: thumbnails, subtitle conversion, live transcoding
+lib/tmdb.js      optional TMDB lookup, cached in data/metadata.json
 public/          the web app (plain HTML, CSS and JS, no build step)
-test/            tests for the file name parser: npm test
+test/            tests for file name parsing and TMDB matching: npm test
 ```

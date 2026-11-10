@@ -44,3 +44,12 @@ test('same show gets the same key however the file is named', () => {
 test('a resolution is not an episode number', () => {
   assert.equal(parseMedia('/m/Clip 1920x1080.mp4').type, 'movie');
 });
+
+test('a TMDB id in the name pins the match and stays out of the title', () => {
+  const m = parseMedia('/m/Big Sun (2021) {tmdb-603}/Big Sun (2021) {tmdb-603}.mkv');
+  assert.deepEqual([m.title, m.year, m.tmdbId], ['Big Sun', 2021, 603]);
+  assert.equal(parseMedia('/m/Big Sun (2021) [tmdbid-42].mkv').tmdbId, 42);
+  const e = parseMedia('/tv/Solar Winds {tmdb-77}/Season 1/Solar Winds S01E02.mkv');
+  assert.deepEqual([e.show, e.tmdbId], ['Solar Winds', 77]);
+  assert.equal(parseMedia('/m/Big Sun (2021).mkv').tmdbId, null);
+});

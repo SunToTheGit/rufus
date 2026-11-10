@@ -41,10 +41,9 @@ class Media {
   }
 
   // Artwork for a video, resized to `width` and cached. `kind` is "poster", "backdrop" or
-  // "frame". Posters only exist when one is on disk; a missing backdrop falls back to a
-  // frame from 10% into the video.
-  async art(item, kind, width) {
-    const src = kind === 'poster' ? item.poster : kind === 'backdrop' ? item.backdrop : null;
+  // "frame" and `src` is the image to use, if there is one. Without a source, a poster
+  // does not exist and a backdrop falls back to a frame from 10% into the video.
+  async art(item, kind, width, src) {
     if (kind === 'poster' && !src) return null;
     const base = ['-hide_banner', '-loglevel', 'error', '-nostdin'];
     const scale = ['-frames:v', '1', '-vf', `scale='min(${width},iw)':-2`, '-q:v', '3', '-y'];
