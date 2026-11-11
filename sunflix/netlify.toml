@@ -1,0 +1,22 @@
+# Hosts SunFlix on Netlify. Set "Base directory" to sunflix, then choose one:
+#
+#   Plain website   set SUNFLIX_MEDIA_URL and the storage settings (see README). Videos are
+#                   dragged onto /admin.html and live in a storage bucket. Nothing else runs.
+#   Your own server set SUNFLIX_SERVER to its https address. Netlify serves only the pages.
+[build]
+  publish = "public"
+  command = "node scripts/netlify-config.js"
+
+[functions]
+  directory = "netlify/functions"
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "no-referrer"

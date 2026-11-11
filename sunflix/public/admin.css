@@ -1,0 +1,30 @@
+.admin { max-width: 860px; margin: 0 auto; padding: 96px var(--pad) 64px; }
+.admin h1 { font-size: 32px; letter-spacing: -0.03em; margin: 0 0 18px; }
+.admin h2 { font-size: 20px; margin: 40px 0 10px; }
+.admin h2 small { color: var(--muted); font-weight: 400; font-size: 14px; margin-left: 8px; }
+.admin .login { margin-top: 12vh; }
+.drop { border: 2px dashed #f7f1e640; border-radius: 16px; padding: 36px 24px 28px; text-align: center; color: var(--muted); transition: border-color 0.15s, background-color 0.15s; }
+.drop.over { border-color: var(--sun); background: #ffb62e14; }
+.drop .big { color: var(--paper); font-size: 20px; font-weight: 650; margin: 0 0 6px; }
+.drop p { margin: 0; }
+.tip-line { color: var(--muted); font-size: 13px; margin: 12px 2px 0; }
+.drop code, .tip-line code { color: var(--paper); background: var(--ink-2); border-radius: 4px; padding: 1px 5px; }
+.queue, .rows { list-style: none; margin: 0; padding: 0; }
+.queue { margin-top: 22px; display: grid; gap: 8px; }
+.queue li { background: var(--ink-2); border-radius: 12px; padding: 12px 14px; }
+.queue .name { display: flex; justify-content: space-between; gap: 12px; font-weight: 600; }
+.queue .name span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queue .state { color: var(--muted); font-size: 13px; font-weight: 400; white-space: nowrap; }
+.queue .note { color: var(--muted); font-size: 13px; margin-top: 4px; }
+.queue li.done .state { color: var(--sun); }
+.queue li.failed .state, .queue li.failed .note { color: #ff9a85; }
+.meter { height: 4px; border-radius: 2px; background: #f7f1e626; margin-top: 10px; overflow: hidden; }
+.meter i { display: block; height: 100%; width: 0; background: var(--sun); transition: width 0.2s; }
+.queue li.done .meter, .queue li.failed .meter { display: none; }
+.rows li { display: grid; grid-template-columns: 96px 1fr auto; gap: 14px; align-items: center; padding: 8px 0; border-bottom: 1px solid #f7f1e614; }
+.rows img, .rows .noimg { width: 96px; aspect-ratio: 16/9; object-fit: cover; border-radius: 6px; background: var(--ink-3); }
+.rows .t { font-weight: 600; }
+.rows .s { color: var(--muted); font-size: 13px; }
+.rows button { background: none; border: 1px solid #f7f1e633; border-radius: 8px; padding: 6px 12px; color: var(--muted); }
+.rows button:hover { color: #ff9a85; border-color: #ff9a85; }
+.rows .none { color: var(--muted); padding: 12px 0; display: block; }
