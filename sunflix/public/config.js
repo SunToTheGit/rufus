@@ -1,3 +1,3 @@
-// Address of the SunFlix server this page should talk to. Leave empty when the page is
-// served by the server itself. The Netlify build overwrites this file (scripts/netlify-config.js).
+// How this copy of the web app finds its library. Empty means "ask the SunFlix server that
+// served this page". The Netlify build (scripts/netlify-config.js) and publish.js overwrite it.
 window.SUNFLIX_SERVER = '';

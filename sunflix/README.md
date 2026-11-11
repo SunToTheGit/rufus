@@ -80,11 +80,72 @@ This product uses the TMDB API but is not endorsed or certified by TMDB.
 
 ## As a plain website (no server to keep running)
 
-If you would rather not leave a computer on, SunFlix can publish your library
-as an ordinary website. The pages go on Netlify, the videos go in a storage
-bucket, and nothing of yours has to be running for people to watch.
+SunFlix can also be an ordinary website: the pages on Netlify, the videos in a
+storage bucket, and nothing of yours switched on. You add videos by dragging
+them onto an admin page. Nothing on your computer is scanned.
 
-**1. Publish from your desktop**
+### Set it up once
+
+**1. Make a bucket.** These steps use [Cloudflare R2](https://dash.cloudflare.com/?to=/:account/r2)
+because it does not charge for downloads; any S3-compatible storage works.
+
+- Create a bucket, for example `sunflix`.
+- In the bucket's settings, turn on public access (the "r2.dev" public address,
+  or your own domain) and copy the address. This is `SUNFLIX_MEDIA_URL`.
+- In the bucket's settings, set its CORS policy to this, with your site's
+  address in it, so the admin page is allowed to upload:
+
+  ```json
+  [{ "AllowedOrigins": ["https://sunflix.netlify.app"],
+     "AllowedMethods": ["GET", "PUT"],
+     "AllowedHeaders": ["*"],
+     "ExposeHeaders": ["ETag"],
+     "MaxAgeSeconds": 3600 }]
+  ```
+
+- Under R2's API tokens, create a token with read and write access to the
+  bucket. Note the Access Key ID, the Secret Access Key and your account ID.
+
+**2. Make the Netlify site.** Create a site from this repository with **Base
+directory** `sunflix`, and these environment variables:
+
+| Variable | Value |
+| --- | --- |
+| `SUNFLIX_MEDIA_URL` | The bucket's public address from step 1 |
+| `R2_ACCOUNT_ID` | Your Cloudflare account ID (other providers: set `S3_ENDPOINT` instead) |
+| `S3_BUCKET` | The bucket's name |
+| `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | From the API token |
+| `SUNFLIX_ADMIN_PASSWORD` | A long password only you know |
+| `TMDB_API_KEY` | Optional, for synopses, cast and artwork |
+
+Rename the site to `sunflix` in its settings if that name is free.
+
+### Add videos
+
+Open `/admin.html` on your site, enter the admin password, and drop videos or
+whole folders onto the page. Each one uploads straight to the bucket and
+appears on the site when it finishes. The same page removes videos.
+
+- **Videos have to be MP4 or WebM** that browsers can play (H.264 or VP9 video,
+  AAC or Opus audio). A website has nothing to convert files with, so MKV, AVI
+  and the like are turned away with a note. [HandBrake](https://handbrake.fr)
+  converts them, or use `publish.js` below, which converts for you.
+- **Subtitles:** put `.srt` or `.vtt` files next to the video with the same
+  name, e.g. `Movie (2021).en.srt`, and drop them together.
+- **More audio languages:** the same, with `.m4a` or `.mp3` files, e.g.
+  `Movie (2021).fr.m4a`. Viewers pick the language in the player.
+- Subtitles and extra audio that are *inside* a video file are not picked up
+  by drag and drop; `publish.js` does extract those.
+- Keep the page open until uploads finish.
+- Viewers' watch history lives in their own browser, including yours. There is
+  no sign-in for viewers: anyone with the address can watch. Storage providers
+  do remove copyrighted material and close accounts over it.
+
+### Or publish from your desktop
+
+`publish.js` builds the same kind of site from folders on your computer, and
+does the converting: anything browsers cannot play becomes MP4, subtitles
+inside files are extracted, and every extra audio track becomes selectable.
 
 ```bash
 node publish.js /path/to/movies /path/to/shows \
@@ -92,46 +153,13 @@ node publish.js /path/to/movies /path/to/shows \
   --media-url https://your-bucket-address
 ```
 
-This scans your folders, converts anything browsers cannot play into MP4,
-makes the artwork and scrub previews, looks titles up on TMDB if
-`TMDB_API_KEY` is set, and writes two folders:
-
-| Folder | What is in it | Where it goes |
-| --- | --- | --- |
-| `published/site` | Pages, the library list, artwork, subtitles. A few MB | Netlify |
-| `published/media` | Videos and preview frames. As big as your library | A storage bucket |
-
-Want to see it first? Leave out `--media-url`, then run
-`node publish.js --serve ./published` and open <http://localhost:8788>.
-
-**2. Upload the videos**
-
-Any storage that serves files over https works. Cloudflare R2 is a good fit
-because it does not charge for downloads. Create a bucket, turn on public
-access to get its address (that is your `--media-url`), and copy
-`published/media` into it, for example with [rclone](https://rclone.org):
-`rclone sync ./published/media r2:your-bucket`.
-
-**3. Put the pages on Netlify**
-
-Drag the `published/site` folder onto <https://app.netlify.com/drop>, or run
-`netlify deploy --dir ./published/site --prod`. Rename the site to `sunflix`
-in its settings if that name is free.
-
-**Adding or removing videos later:** run the same `publish` command again,
-then repeat steps 2 and 3. Only new or changed files are processed.
-
-What is different from running the server:
-
-- Videos are converted once, when you publish, instead of while watching. Files
-  browsers already play are used as they are.
-- Each video keeps its first audio track only.
-- Everyone's watch history lives in their own browser, including yours.
-- There is no sign-in: the site is public to anyone with the address. The
-  same caution as below applies, and storage providers do remove copyrighted
-  material and close accounts over it.
-- Uploading through the website itself is not built yet; publishing is done
-  from your desktop.
+It writes `published/site` (the pages, a few MB: drag it onto
+<https://app.netlify.com/drop>) and `published/media` (the videos: copy it
+into the bucket, for example `rclone sync ./published/media r2:your-bucket`).
+Leave out `--media-url` and run `node publish.js --serve ./published` to try
+it on your own computer first. Run it again after adding or removing videos;
+only what changed is processed. A site made this way is managed from your
+desktop and has no admin page.
 
 ## Sharing it with everyone (a public site)
 
@@ -257,13 +285,16 @@ SUNFLIX_PASSWORD=opensesame PORT=9000 node server.js /mnt/media
 
 ```
 server.js        HTTP server, routes, login, watch history
-publish.js       turns the library into a plain website (no server)
+publish.js       turns folders on your computer into a plain website
+netlify/         the serverless function behind the drag-and-drop site
+lib/cloud.js     drag-and-drop uploads: library list and upload addresses
+lib/s3.js        talks to the storage bucket (S3-compatible)
 lib/parse.js     file name -> movie / show / season / episode
 lib/library.js   folder scan + ffprobe, cached in data/library.json
 lib/media.js     ffmpeg: thumbnails, subtitle conversion, live transcoding
 lib/tmdb.js      optional TMDB lookup, cached in data/metadata.json
 lib/catalog.js   what the web app is told about each video (server and publish)
-public/          the web app (plain HTML, CSS and JS, no build step)
-netlify.toml     optional: host the web app on Netlify, pointed at your server
+public/          the web app and admin page (plain HTML, CSS and JS, no build step)
+netlify.toml     Netlify settings for the plain-website and hosted-pages modes
 test/            tests for file name parsing and TMDB matching: npm test
 ```

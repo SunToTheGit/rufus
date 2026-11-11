@@ -137,7 +137,7 @@ function localContinue(local) {
 // ------------------------------------------------------------------ library
 
 async function loadLibrary() {
-  const lib = STATIC ? await fetch('library.json', { cache: 'no-cache' }).then((r) => r.json()) : await api('/api/library');
+  const lib = STATIC ? await fetch(window.SUNFLIX_LIBRARY || 'library.json', { cache: 'no-cache' }).then((r) => r.json()) : await api('/api/library');
   S.items = lib.items;
   S.byId = new Map(lib.items.map((it) => [it.id, it]));
   S.cont = lib.continue.map((id) => S.byId.get(id)).filter(Boolean);
@@ -339,7 +339,10 @@ function slideFor(it, eyebrow) {
 
 function emptyState() {
   const scanning = S.status.scanning;
-  if (S.guest && !scanning) return h('div', { class: 'empty' }, h('h1', {}, 'Nothing to watch yet'), h('p', {}, 'This library is empty for now. Check back later.'));
+  if (S.guest && !scanning) {
+    return h('div', { class: 'empty' }, h('h1', {}, 'Nothing to watch yet'), h('p', {}, 'This library is empty for now. Check back later.'),
+      window.SUNFLIX_ADMIN ? h('div', { class: 'actions', style: 'justify-content:center' }, h('a', { class: 'btn', href: '/admin.html' }, 'Add videos')) : null);
+  }
   return h('div', { class: 'empty' },
     h('h1', {}, scanning ? 'Scanning your library…' : 'Nothing to watch yet'),
     scanning
@@ -416,7 +419,7 @@ function facts(it) {
     list(it.directors) ? [it.directors.length > 1 ? 'Directors' : 'Director', list(it.directors)] : null,
     list(it.cast) ? ['Cast', list(it.cast)] : null,
     list(it.genres) ? ['Genres', list(it.genres)] : null,
-    ['Video', `${it.width}×${it.height} · ${codec}${it.playback === 'direct' ? '' : it.playback === 'remux' ? ' · repackaged as you watch' : ' · converted as you watch'}`],
+    ['Video', `${it.width}×${it.height}${codec ? ` · ${codec}` : ''}${it.playback === 'direct' ? '' : it.playback === 'remux' ? ' · repackaged as you watch' : ' · converted as you watch'}`],
     named ? ['Audio', tracks(it.audio)] : null,
     it.subs.length ? ['Subtitles', tracks(it.subs)] : null,
     it.file ? ['File', it.file] : null,
@@ -573,7 +576,7 @@ function openPlayer(id, query) {
   const msg = h('div', { class: 'pmsg', hidden: true });
   const bezel = h('div', { class: 'bezel', 'aria-live': 'polite' });
   const playBtn = button('Play', ICON.play, toggle, 'big');
-  const muteBtn = button('Mute', ICON.vol, () => { video.muted = !video.muted; });
+  const muteBtn = button('Mute', ICON.vol, () => { sound.muted = !sound.muted; applySound(); });
   const vol = h('input', { class: 'vol', type: 'range', min: 0, max: 1, step: 0.05, value: 1, 'aria-label': 'Volume' });
   const elapsed = h('span', { class: 'time' }, '0:00');
   const remaining = h('span', { class: 'time' }, `-${clock(dur)}`);
@@ -704,9 +707,10 @@ function openPlayer(id, query) {
   }
 
   function setVolume(v) {
-    video.muted = false;
-    video.volume = Math.max(0, Math.min(1, v));
-    flash(`Volume ${Math.round(video.volume * 100)}%`);
+    sound.muted = false;
+    sound.volume = Math.max(0, Math.min(1, v));
+    applySound();
+    flash(`Volume ${Math.round(sound.volume * 100)}%`);
   }
 
   function report(position) {
@@ -734,7 +738,7 @@ function openPlayer(id, query) {
     drawMenu();
     if (!key) return;
     try {
-      const res = await fetch(STATIC ? `subs/${item.id}-${key}.vtt` : `${BASE}/subs/${item.id}/${key}`);
+      const res = await fetch(track.url || (STATIC ? `subs/${item.id}-${key}.vtt` : `${BASE}/subs/${item.id}/${key}`));
       if (!res.ok) throw new Error();
       const cues = parseVtt(await res.text());
       if (P.sub === key) P.cues = cues;
@@ -743,16 +747,61 @@ function openPlayer(id, query) {
     }
   }
 
+  // Volume and mute are the viewer's choice; they are applied to whichever element is making sound.
+  const sound = { volume: 1, muted: false };
+  let alt = null; // an <audio> element playing another language in step with the picture
+  function applySound() {
+    video.volume = sound.volume;
+    video.muted = sound.muted || Boolean(alt);
+    if (alt) { alt.volume = sound.volume; alt.muted = sound.muted; }
+    const silent = sound.muted || !sound.volume;
+    muteBtn.innerHTML = silent ? ICON.mute : ICON.vol;
+    muteBtn.setAttribute('aria-label', silent ? 'Unmute' : 'Mute');
+    vol.value = sound.muted ? 0 : sound.volume;
+    try { localStorage.setItem('sunflix-volume', String(sound.volume)); } catch { /* private mode */ }
+  }
+
+  // Keeps the separate audio file lined up with the video: same position, same play state.
+  function syncAlt() {
+    if (!alt) return;
+    if (Math.abs(alt.currentTime - video.currentTime) > 0.3) alt.currentTime = video.currentTime;
+    alt.playbackRate = video.playbackRate;
+    const running = !video.paused && !video.seeking && video.readyState >= 3;
+    if (running && alt.paused) alt.play().catch(() => {});
+    else if (!running && !alt.paused) alt.pause();
+  }
+  function dropAlt() {
+    if (!alt) return;
+    alt.pause();
+    alt.removeAttribute('src');
+    alt.load();
+    alt = null;
+  }
+
   function setAudio(i) {
     const t = now();
     P.audio = i;
-    P.mode = i === 0 && item.playback === 'direct' ? 'direct' : 'transcode'; // only the server can switch tracks
     drawMenu();
+    if (STATIC) {
+      // No server to re-cut the video: other languages are separate audio files played alongside.
+      dropAlt();
+      const track = item.audio[i];
+      if (i > 0 && track && track.url) {
+        alt = new Audio(`${MEDIA}/${track.url}`);
+        alt.preload = 'auto';
+        alt.addEventListener('error', () => { if (P.audio === i) { flash('That audio track is unavailable'); setAudio(0); } });
+      }
+      applySound();
+      syncAlt();
+      return;
+    }
+    P.mode = i === 0 && item.playback === 'direct' ? 'direct' : 'transcode'; // only the server can switch tracks
     load(t);
   }
 
   function drawMenu() {
-    const row = (label, checked, onclick) => h('button', { type: 'button', role: 'menuitemradio', 'aria-checked': String(checked), onclick },
+    // Choosing something closes the menu, so the keyboard goes back to controlling the video.
+    const row = (label, checked, choose) => h('button', { type: 'button', role: 'menuitemradio', 'aria-checked': String(checked), onclick: () => { choose(); menu.hidden = true; menuBtn.focus(); } },
       h('span', { class: 'tick' }, checked ? '✓' : ''), label);
     menu.replaceChildren(...[
       item.subs.length ? h('div', {}, h('h4', {}, 'Subtitles'),
@@ -777,6 +826,14 @@ function openPlayer(id, query) {
     tip.hidden = false;
     tip.style.left = `${Math.max(104, Math.min(r.width - 104, e.clientX - r.left))}px`;
     tipTime.textContent = clock(t);
+    if (item.sprite) {
+      // Uploaded videos carry one image holding every preview frame; show the right cell of it.
+      const sp = item.sprite;
+      const n = Math.max(0, Math.min(sp.count - 1, Math.floor(t / sp.step)));
+      if (!tipImg.getAttribute('src')) tipImg.src = sp.url;
+      Object.assign(tipImg.style, { width: `${sp.w}px`, height: `${sp.h}px`, aspectRatio: 'auto', objectFit: 'none', objectPosition: `-${(n % sp.cols) * sp.w}px -${Math.floor(n / sp.cols) * sp.h}px` });
+      return;
+    }
     const bucket = String(Math.floor(t / step) * step);
     if (tipImg.dataset.bucket === bucket) return;
     tipImg.dataset.bucket = bucket;
@@ -828,6 +885,7 @@ function openPlayer(id, query) {
     }
   });
   video.addEventListener('progress', paintBuffered);
+  for (const name of ['play', 'playing', 'pause', 'seeking', 'seeked', 'waiting', 'ratechange', 'timeupdate']) video.addEventListener(name, syncAlt);
   video.addEventListener('playing', () => {
     spin.hidden = true;
     P.loading = false;
@@ -882,14 +940,7 @@ function openPlayer(id, query) {
     else if (!tapWasIdle && !video.paused) root.classList.add('idle');
   });
   video.addEventListener('dblclick', () => { if (!touch) fullscreen(); });
-  vol.addEventListener('input', () => { video.volume = Number(vol.value); video.muted = false; });
-  video.addEventListener('volumechange', () => {
-    const silent = video.muted || !video.volume;
-    muteBtn.innerHTML = silent ? ICON.mute : ICON.vol;
-    muteBtn.setAttribute('aria-label', silent ? 'Unmute' : 'Mute');
-    vol.value = video.muted ? 0 : video.volume;
-    try { localStorage.setItem('sunflix-volume', String(video.volume)); } catch { /* private mode */ }
-  });
+  vol.addEventListener('input', () => { sound.volume = Number(vol.value); sound.muted = false; applySound(); });
 
   function onKey(e) {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -907,10 +958,10 @@ function openPlayer(id, query) {
     const onButton = e.target.closest('button');
     if (k === ' ' || k === 'k' || (k === 'enter' && !onButton)) { if (onButton && k === ' ') return; toggle(); } else if (k === 'arrowleft') skip(-10);
     else if (k === 'arrowright') skip(10);
-    else if (k === 'arrowup') setVolume(video.volume + 0.05);
-    else if (k === 'arrowdown') setVolume(video.volume - 0.05);
+    else if (k === 'arrowup') setVolume(sound.volume + 0.05);
+    else if (k === 'arrowdown') setVolume(sound.volume - 0.05);
     else if (k === 'f') fullscreen();
-    else if (k === 'm') { video.muted = !video.muted; flash(video.muted ? 'Muted' : 'Sound on'); } else if (k === 'c' && item.subs.length) {
+    else if (k === 'm') { sound.muted = !sound.muted; applySound(); flash(sound.muted ? 'Muted' : 'Sound on'); } else if (k === 'c' && item.subs.length) {
       const pick = P.sub ? '' : item.subs[0].key;
       setSub(pick, true);
       flash(pick ? `Subtitles: ${langLabel(item.subs[0], 'on')}` : 'Subtitles off');
@@ -930,7 +981,8 @@ function openPlayer(id, query) {
 
   try {
     const saved = Number(localStorage.getItem('sunflix-volume'));
-    if (saved > 0 && saved <= 1) { video.volume = saved; vol.value = saved; }
+    if (saved > 0 && saved <= 1) sound.volume = saved;
+    applySound();
     // Bring back subtitles in the language chosen last time, if this video has it.
     const lang = localStorage.getItem('sunflix-subs');
     // "en" on a file next to the video and "eng" inside one are the same language.
@@ -956,6 +1008,7 @@ function openPlayer(id, query) {
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
       const last = report();
       P.done = true;
+      dropAlt();
       video.pause();
       video.removeAttribute('src'); // also tells the server to stop transcoding
       video.load();
@@ -1004,7 +1057,9 @@ async function render() {
   const swap = () => {
     const keep = window.scrollY;
     app.replaceChildren(...[view].flat(Infinity).filter(Boolean),
-      ...(S.meta ? [h('footer', { class: 'credit' }, 'Film and series details from TMDB. This product uses the TMDB API but is not endorsed or certified by TMDB.')] : []));
+      ...(S.meta || window.SUNFLIX_ADMIN ? [h('footer', { class: 'credit' },
+        S.meta ? 'Film and series details from TMDB. This product uses the TMDB API but is not endorsed or certified by TMDB. ' : null,
+        window.SUNFLIX_ADMIN ? h('a', { href: '/admin.html' }, 'Manage library') : null)] : []));
     document.body.classList.toggle('has-hero', Boolean(app.querySelector(':scope > .hero')));
     window.scrollTo(0, samePage ? keep : 0);
     onScroll();

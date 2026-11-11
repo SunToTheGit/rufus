@@ -95,14 +95,14 @@ async function publish(dirs, out) {
   const dataDir = path.resolve(process.env.SUNFLIX_DATA || path.join(__dirname, 'data'));
   const site = path.join(out, 'site');
   const mediaOut = path.join(out, 'media');
-  for (const d of [dataDir, path.join(site, 'art'), path.join(site, 'subs'), path.join(mediaOut, 'videos'), path.join(mediaOut, 'previews')]) {
+  for (const d of [dataDir, path.join(site, 'art'), path.join(site, 'subs'), path.join(mediaOut, 'videos'), path.join(mediaOut, 'previews'), path.join(mediaOut, 'audio')]) {
     fs.mkdirSync(d, { recursive: true });
   }
 
   // Remembers which version of each source file the published video and previews were made
   // from, so running publish again only redoes what changed. Kept outside the uploaded folders.
   const stateFile = path.join(out, '.publish-state.json');
-  const state = { videos: {}, previews: {}, ...readJson(stateFile, {}) };
+  const state = { videos: {}, previews: {}, audio: {}, ...readJson(stateFile, {}) };
 
   const lib = new Library({ dirs, dataDir });
   const media = new Media(dataDir);
@@ -160,6 +160,26 @@ async function publish(dirs, out) {
     return rel;
   }
 
+  // Every audio track after the first becomes its own small file. With no server to re-cut
+  // the video, the player plays the chosen one alongside the picture.
+  async function otherAudio(it) {
+    const want = `${it.size}:${it.mtime}`;
+    const out = [];
+    for (let n = 1; n < it.audio.length; n++) {
+      const rel = `audio/${it.id}-${n}.m4a`;
+      const dest = path.join(mediaOut, rel);
+      if (state.audio[`${it.id}-${n}`] !== want || !(await exists(dest))) {
+        const tmp = `${dest}.tmp.m4a`;
+        await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-nostdin', '-i', it.path, '-map', `0:a:${n}`, '-vn',
+          ...(it.audio[n].codec === 'aac' ? ['-c:a', 'copy'] : ['-c:a', 'aac', '-ac', '2', '-b:a', '160k']), '-movflags', '+faststart', '-y', tmp]);
+        await fsp.rename(tmp, dest);
+        state.audio[`${it.id}-${n}`] = want;
+      }
+      out.push(rel);
+    }
+    return out;
+  }
+
   // Small frames for the timeline's hover preview, made in one pass over the keyframes.
   async function previews(it) {
     const step = Math.max(10, Math.ceil(it.duration / 240));
@@ -181,8 +201,8 @@ async function publish(dirs, out) {
   const published = await Promise.all(items.map((it) => limit(async () => {
     try {
       const view = catalog.itemView(tmdb, it, null, true);
-      const [videoPath, previewStep, poster400, backdrop640, backdrop1920, frame640, logo] = await Promise.all([
-        video(it), previews(it).catch(() => 0),
+      const [videoPath, extraAudio, previewStep, poster400, backdrop640, backdrop1920, frame640, logo] = await Promise.all([
+        video(it), otherAudio(it).catch(() => []), previews(it).catch(() => 0),
         art(it, 'poster', 400), art(it, 'backdrop', 640), art(it, 'backdrop', 1920),
         it.type === 'episode' ? art(it, 'frame', 640) : null, art(it, 'logo'),
       ]);
@@ -195,7 +215,8 @@ async function publish(dirs, out) {
       }
       process.stdout.write(`\r  ${++done} of ${items.length} videos ready`);
       return {
-        ...view, subs, playback: 'direct', audio: view.audio.slice(0, 1), // one audio track: there is no server to switch them
+        ...view, subs, playback: 'direct',
+        audio: view.audio.slice(0, 1 + extraAudio.length).map((a, n) => ({ ...a, url: n ? extraAudio[n - 1] : null })),
         video: videoPath, previewStep,
         art: { poster400, backdrop640, backdrop1920, frame640, logo },
       };
@@ -211,16 +232,16 @@ async function publish(dirs, out) {
   // Clear out videos and previews that belong to files no longer in the library.
   const keep = new Set(good.map((it) => it.id));
   let removed = 0;
-  for (const sub of ['videos', 'previews']) {
+  for (const sub of ['videos', 'previews', 'audio']) {
     for (const name of await fsp.readdir(path.join(mediaOut, sub))) {
       const id = name.slice(0, 16);
-      if (/^[0-9a-f]{16}(\.|$)/.test(name) && !keep.has(id)) {
+      if (/^[0-9a-f]{16}(\.|-|$)/.test(name) && !keep.has(id)) {
         await fsp.rm(path.join(mediaOut, sub, name), { recursive: true, force: true });
         removed += sub === 'videos' ? 1 : 0;
       }
     }
   }
-  for (const part of [state.videos, state.previews]) for (const id of Object.keys(part)) if (!keep.has(id)) delete part[id];
+  for (const part of [state.videos, state.previews, state.audio]) for (const id of Object.keys(part)) if (!keep.has(id.slice(0, 16))) delete part[id];
   writeJson(stateFile, state);
 
   for (const name of await fsp.readdir(PUBLIC)) await fsp.copyFile(path.join(PUBLIC, name), path.join(site, name));
