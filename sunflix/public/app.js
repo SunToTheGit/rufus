@@ -530,7 +530,7 @@ function showLogin() {
       await refresh();
     } catch (ex) { err.textContent = ex.message; input.select(); }
   } },
-  h('div', { class: 'logo' }, h('span', {}, h('b', {}, 'Sun'), 'Flix')),
+  h('div', { class: 'logo' }, h('span', {}, h('b', {}, 'Sun'), 'Flix'), h('span', { class: 'logo-tv', role: 'img', 'aria-label': 'TV', title: 'Click to repaint' })),
   input, h('button', { class: 'btn primary', type: 'submit' }, 'Sign in'), err,
   // In a public library signing in is optional, so there has to be a way back out.
   S.guest ? h('button', { class: 'ghost', type: 'button', onclick: () => { document.body.classList.remove('locked'); render(); } }, 'Back to the library') : null);

@@ -41,6 +41,15 @@ img.fade.in { opacity: 1; }
 .top.solid { background: #0b0906f2; padding-bottom: 14px; backdrop-filter: blur(14px); }
 .logo { display: flex; align-items: center; gap: 8px; font-size: 21px; font-weight: 700; letter-spacing: -0.02em; }
 .logo b { color: var(--sun); }
+/* the spray-painted "TV" tag: sits tight against the wordmark, tilted, a little taller than the type */
+.logo-tv {
+  flex: none; height: 1.75em; width: 2.01em; margin: -0.4em 0 -0.35em -0.42em; transform: rotate(-7deg); cursor: pointer;
+  background: linear-gradient(135deg, var(--tv-a, #ff7a3c), var(--tv-b, #ff3d2e));
+  -webkit-mask: url(/tv.svg) center / contain no-repeat; mask: url(/tv.svg) center / contain no-repeat;
+}
+.logo-tv.pop { animation: tv-pop 0.32s var(--ease); }
+@keyframes tv-pop { 40% { transform: rotate(-13deg) scale(1.22); } }
+@media (prefers-reduced-motion: reduce) { .logo-tv.pop { animation: none; } }
 .nav { display: flex; gap: 2px; }
 .nav a { padding: 6px 13px; border-radius: 999px; color: #f7f1e6b3; font-weight: 550; }
 .nav a:hover { color: var(--paper); }
