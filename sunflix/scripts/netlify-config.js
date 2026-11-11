@@ -37,3 +37,19 @@ if (media) {
   process.exit(1);
 }
 fs.writeFileSync(path.join(__dirname, '..', 'public', 'config.js'), `${lines.join('\n')}\n`);
+
+// The upload page converts files in the browser with a build of ffmpeg. Netlify installs it
+// from package.json (devDependencies); copy it to where the page loads it from.
+if (media) {
+  const modules = path.join(__dirname, '..', 'node_modules', '@ffmpeg');
+  const vendor = path.join(__dirname, '..', 'public', 'vendor', 'ffmpeg');
+  try {
+    fs.mkdirSync(vendor, { recursive: true });
+    for (const dir of [path.join(modules, 'ffmpeg', 'dist', 'umd'), path.join(modules, 'core', 'dist', 'umd')]) {
+      for (const name of fs.readdirSync(dir)) if (/\.(js|wasm)$/.test(name)) fs.copyFileSync(path.join(dir, name), path.join(vendor, name));
+    }
+    console.log('Converter for the upload page is in place.');
+  } catch {
+    console.warn('The converter could not be copied (was npm install run?). The upload page will only accept MP4 and WebM.');
+  }
+}

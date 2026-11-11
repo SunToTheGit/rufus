@@ -1,14 +1,22 @@
 {
   "name": "sunflix",
   "version": "0.1.0",
-  "description": "A small self-hosted media server.",
+  "description": "A small self-hosted media server, or a plain website for your videos.",
   "private": true,
   "license": "MIT",
   "main": "server.js",
-  "bin": { "sunflix": "server.js" },
-  "engines": { "node": ">=18" },
+  "bin": {
+    "sunflix": "server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "start": "node server.js",
     "test": "node --test"
+  },
+  "devDependencies": {
+    "@ffmpeg/core": "0.12.10",
+    "@ffmpeg/ffmpeg": "0.12.15"
   }
 }

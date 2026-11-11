@@ -15,7 +15,9 @@ enough to read in one sitting.
 ## Run it
 
 You need [Node.js](https://nodejs.org) 18 or newer and [ffmpeg](https://ffmpeg.org)
-(which includes `ffprobe`). There is nothing to `npm install`.
+(which includes `ffprobe`). There is nothing to `npm install`; the two packages
+in `package.json` are only used by the Netlify build, for the upload page's
+in-browser converter.
 
 ```bash
 node server.js /path/to/movies /path/to/shows
@@ -126,17 +128,26 @@ Open `/admin.html` on your site, enter the admin password, and drop videos or
 whole folders onto the page. Each one uploads straight to the bucket and
 appears on the site when it finishes. The same page removes videos.
 
-- **Videos have to be MP4 or WebM** that browsers can play (H.264 or VP9 video,
-  AAC or Opus audio). A website has nothing to convert files with, so MKV, AVI
-  and the like are turned away with a note. [HandBrake](https://handbrake.fr)
-  converts them, or use `publish.js` below, which converts for you.
-- **Subtitles:** put `.srt` or `.vtt` files next to the video with the same
-  name, e.g. `Movie (2021).en.srt`, and drop them together.
-- **More audio languages:** the same, with `.m4a` or `.mp3` files, e.g.
-  `Movie (2021).fr.m4a`. Viewers pick the language in the player.
-- Subtitles and extra audio that are *inside* a video file are not picked up
-  by drag and drop; `publish.js` does extract those.
-- Keep the page open until uploads finish.
+- **Drop any video file.** MP4 and WebM go up as they are. MKV, AVI, MOV and
+  the like are converted to MP4 right there in your browser before they
+  upload; nothing is installed and nothing leaves your computer except the
+  finished file.
+  - Usually this is quick, because most files only need repackaging and the
+    picture is copied untouched (a film takes about as long as copying it).
+  - Old or unusual picture formats (DivX/Xvid AVIs, MPEG-2) have to be
+    re-encoded, which in a browser runs slower than the video plays: expect a
+    two-hour film to take several hours.
+  - HEVC (H.265) video is kept as it is. It plays in Safari and most recent
+    browsers, but not on some older devices.
+  - Files over 2 GB that need converting are too big to convert in a browser.
+    Convert those on your computer ([HandBrake](https://handbrake.fr), or
+    `publish.js` below) and drop the MP4.
+- **Subtitles and audio languages inside a file are kept**: each becomes
+  selectable in the player.
+- **Separate subtitle files** (`.srt`, `.vtt`) and **audio files** (`.m4a`,
+  `.mp3`) come along too when they share the video's name, e.g.
+  `Movie (2021).fr.srt`. Drop them together with the video.
+- Keep the page open until conversions and uploads finish.
 - Viewers' watch history lives in their own browser, including yours. There is
   no sign-in for viewers: anyone with the address can watch. Storage providers
   do remove copyrighted material and close accounts over it.

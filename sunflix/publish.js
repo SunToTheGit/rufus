@@ -244,7 +244,9 @@ async function publish(dirs, out) {
   for (const part of [state.videos, state.previews, state.audio]) for (const id of Object.keys(part)) if (!keep.has(id.slice(0, 16))) delete part[id];
   writeJson(stateFile, state);
 
-  for (const name of await fsp.readdir(PUBLIC)) await fsp.copyFile(path.join(PUBLIC, name), path.join(site, name));
+  for (const entry of await fsp.readdir(PUBLIC, { withFileTypes: true })) {
+    if (entry.isFile() && !entry.name.startsWith('admin.')) await fsp.copyFile(path.join(PUBLIC, entry.name), path.join(site, entry.name)); // no admin page: this site is managed from the desktop
+  }
   await fsp.writeFile(path.join(site, 'config.js'),
     `// Written by publish.js: this copy of SunFlix is a plain website with no server behind it.\nwindow.SUNFLIX_STATIC = true;\nwindow.SUNFLIX_MEDIA = ${JSON.stringify(mediaUrl || '/media')};\n`);
   await fsp.writeFile(path.join(site, 'library.json'), JSON.stringify({
