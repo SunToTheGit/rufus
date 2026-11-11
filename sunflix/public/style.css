@@ -44,7 +44,7 @@ img.fade.in { opacity: 1; }
 /* the spray-painted "TV" tag: sits tight against the wordmark, tilted, a little taller than the type */
 .logo-tv {
   flex: none; height: 1.75em; width: 2.01em; margin: -0.4em 0 -0.35em -0.42em; transform: rotate(-7deg); cursor: pointer;
-  background: linear-gradient(135deg, var(--tv-a, #ff7a3c), var(--tv-b, #ff3d2e));
+  background: linear-gradient(135deg, var(--tv-a, #ffe45c), var(--tv-b, #ffa51f));
   -webkit-mask: url(/tv.svg) center / contain no-repeat; mask: url(/tv.svg) center / contain no-repeat;
 }
 .logo-tv.pop { animation: tv-pop 0.32s var(--ease); }
