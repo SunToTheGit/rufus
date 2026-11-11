@@ -13,6 +13,7 @@ const { execFileSync } = require('node:child_process');
 const { Library, readJson, writeJson } = require('./lib/library');
 const { Media } = require('./lib/media');
 const { Tmdb } = require('./lib/tmdb');
+const catalog = require('./lib/catalog');
 
 const ROOT = __dirname;
 const PUBLIC = path.join(ROOT, 'public');
@@ -51,18 +52,15 @@ const tmdb = process.env.TMDB_API_KEY
   ? new Tmdb({ key: process.env.TMDB_API_KEY.trim(), dataDir: DATA, apiUrl: process.env.TMDB_API_URL, imageUrl: process.env.TMDB_IMAGE_URL })
   : null;
 
+const artSource = (it, kind) => catalog.artSource(tmdb, it, kind);
+const publicItem = (it, guest) => catalog.itemView(tmdb, it, guest ? null : progress[it.id], guest); // guests keep their own place in their browser
+const showMeta = () => catalog.showViews(tmdb, lib.all());
+
 // Scan the folders, then look up anything new on TMDB when that is switched on.
 function rescan() {
   return lib.scan().then(() => tmdb && tmdb.sync(lib.all()));
 }
 
-// Artwork next to the files wins; TMDB fills the gaps.
-function artSource(it, kind) {
-  const meta = tmdb && tmdb.for(it);
-  if (kind === 'logo') return meta ? meta.logo : null;
-  if (kind === 'frame') return null;
-  return it[kind] || (meta ? meta[kind] : null);
-}
 
 // ---------------------------------------------------------------- progress
 
@@ -110,46 +108,7 @@ function continueIds() {
   return [...stamp].sort((a, b) => b[1] - a[1]).slice(0, 24).map(([id]) => id);
 }
 
-// What the browser gets to know about a video. File paths stay on the server.
-function publicItem(it, guest) {
-  const p = guest ? null : progress[it.id]; // guests keep their own place in their browser
-  const meta = tmdb && tmdb.for(it);
-  const isEp = it.type === 'episode';
-  const ep = isEp && meta ? meta.episodes[`${it.season}x${it.episode}`] : null;
-  return {
-    id: it.id, type: it.type,
-    title: isEp ? (ep && ep.title) || it.title : (meta && meta.title) || it.title,
-    year: (meta && meta.year) || it.year,
-    show: isEp ? (meta && meta.title) || it.show : undefined,
-    showKey: it.showKey, season: it.season, episode: it.episode,
-    // Episodes carry their own synopsis; everything about the show is sent once, in `shows`.
-    overview: isEp ? (ep && ep.overview) || '' : meta ? meta.overview : '',
-    ...(meta && !isEp ? { tagline: meta.tagline, genres: meta.genres, rating: meta.rating, cast: meta.cast, directors: meta.directors } : {}),
-    hasLogo: Boolean(artSource(it, 'logo')),
-    duration: it.duration, width: it.width, height: it.height,
-    vcodec: it.vcodec, size: it.size, addedAt: it.addedAt, playback: it.playback,
-    file: guest ? undefined : path.basename(it.path), hasPoster: Boolean(artSource(it, 'poster')), hasBackdrop: Boolean(artSource(it, 'backdrop')),
-    audio: it.audio,
-    subs: [
-      ...it.embedded.map((s) => ({ key: `e${s.n}`, lang: s.lang, title: s.title })),
-      ...it.sidecars.map((s, n) => ({ key: `s${n}`, lang: s.lang, title: null })),
-    ],
-    position: p ? p.position : 0,
-    watched: Boolean(p && p.watched),
-  };
-}
 
-// Show-level details, keyed like the client groups episodes.
-function showMeta() {
-  const out = {};
-  if (!tmdb) return out;
-  for (const it of lib.all()) {
-    if (it.type !== 'episode' || out[it.showKey]) continue;
-    const m = tmdb.for(it);
-    if (m) out[it.showKey] = { overview: m.overview, tagline: m.tagline, genres: m.genres, rating: m.rating, cast: m.cast, creators: m.creators };
-  }
-  return out;
-}
 
 // -------------------------------------------------------------------- auth
 

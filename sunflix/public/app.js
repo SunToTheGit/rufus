@@ -4,6 +4,10 @@
 // Where the SunFlix server is. Empty when this page is served by the server itself; the
 // hosted copy of the web app (see netlify.toml) points it at the owner's server.
 const BASE = String(window.SUNFLIX_SERVER || '').replace(/\/+$/, '');
+// A published copy (publish.js) has no server at all: the library is a file next to this
+// page and the videos sit in a storage bucket at MEDIA.
+const STATIC = Boolean(window.SUNFLIX_STATIC);
+const MEDIA = String(window.SUNFLIX_MEDIA || '').replace(/\/+$/, '');
 
 const app = document.getElementById('app');
 const S = { items: [], byId: new Map(), shows: new Map(), cont: [], status: {}, mediaDirs: [], loaded: false };
@@ -56,7 +60,11 @@ function runtime(sec) {
 
 const quality = (it) => (it.height >= 2000 || it.width >= 3800 ? '4K' : it.height >= 1000 || it.width >= 1900 ? 'HD 1080' : it.height >= 700 ? 'HD 720' : 'SD');
 const epCode = (it) => `S${it.season} E${it.episode}`;
-const art = (id, kind, w) => `${BASE}/art/${id}?kind=${kind}&w=${w}`;
+function art(id, kind, w) {
+  if (!STATIC) return `${BASE}/art/${id}?kind=${kind}&w=${w}`;
+  const made = (S.byId.get(id) || {}).art || {};
+  return made[kind === 'logo' ? 'logo' : kind + w] || made.backdrop640 || '';
+}
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 let langNames = null;
@@ -129,7 +137,7 @@ function localContinue(local) {
 // ------------------------------------------------------------------ library
 
 async function loadLibrary() {
-  const lib = await api('/api/library');
+  const lib = STATIC ? await fetch('library.json', { cache: 'no-cache' }).then((r) => r.json()) : await api('/api/library');
   S.items = lib.items;
   S.byId = new Map(lib.items.map((it) => [it.id, it]));
   S.cont = lib.continue.map((id) => S.byId.get(id)).filter(Boolean);
@@ -632,7 +640,7 @@ function openPlayer(id, query) {
     msg.hidden = true;
     if (P.mode === 'direct') {
       P.offset = 0;
-      video.src = `${BASE}/stream/${item.id}`;
+      video.src = STATIC ? `${MEDIA}/${item.video}` : `${BASE}/stream/${item.id}`;
       if (t > 0) video.addEventListener('loadedmetadata', () => { if (mine === loads) video.currentTime = t; }, { once: true });
     } else {
       video.pause();
@@ -726,7 +734,7 @@ function openPlayer(id, query) {
     drawMenu();
     if (!key) return;
     try {
-      const res = await fetch(`${BASE}/subs/${item.id}/${key}`);
+      const res = await fetch(STATIC ? `subs/${item.id}-${key}.vtt` : `${BASE}/subs/${item.id}/${key}`);
       if (!res.ok) throw new Error();
       const cues = parseVtt(await res.text());
       if (P.sub === key) P.cues = cues;
@@ -757,7 +765,7 @@ function openPlayer(id, query) {
 
   // ---- timeline
 
-  const step = Math.max(10, Math.ceil(dur / 240)); // preview frames are shared per time bucket
+  const step = item.previewStep || Math.max(10, Math.ceil(dur / 240)); // preview frames are shared per time bucket
   let previewTimer = null;
   const timeAt = (e) => {
     const r = scrub.getBoundingClientRect();
@@ -773,7 +781,7 @@ function openPlayer(id, query) {
     if (tipImg.dataset.bucket === bucket) return;
     tipImg.dataset.bucket = bucket;
     clearTimeout(previewTimer); // only fetch the frame the pointer settles on
-    previewTimer = setTimeout(() => { tipImg.classList.remove('in'); tipImg.src = `${BASE}/preview/${item.id}?t=${bucket}`; }, 90);
+    previewTimer = setTimeout(() => { tipImg.classList.remove('in'); tipImg.src = STATIC ? `${MEDIA}/previews/${item.id}/${Number(bucket) / step + 1}.jpg` : `${BASE}/preview/${item.id}?t=${bucket}`; }, 90);
   }
   scrub.addEventListener('pointermove', (e) => { if (!dur) return; showTip(e); if (P.scrubbing) paint(timeAt(e)); });
   scrub.addEventListener('pointerleave', () => { if (!P.scrubbing) tip.hidden = true; });
@@ -844,10 +852,11 @@ function openPlayer(id, query) {
   video.addEventListener('error', () => {
     if (!video.getAttribute('src')) return;
     const t = Math.max(now(), P.target);
-    if (P.mode === 'direct') { P.mode = 'transcode'; load(t); return; } // let the server convert it instead
+    if (P.mode === 'direct' && !STATIC) { P.mode = 'transcode'; load(t); return; } // let the server convert it instead
     spin.hidden = true;
     msg.hidden = false;
-    msg.textContent = 'This video could not be played right now. The server may be busy converting other videos, or the file may be damaged.';
+    msg.textContent = STATIC ? 'This video could not be played. It may still be uploading, or your browser may not support it.'
+      : 'This video could not be played right now. The server may be busy converting other videos, or the file may be damaged.';
   });
   video.addEventListener('ended', async () => {
     const finished = !dur || now() > dur * 0.92;
@@ -924,7 +933,9 @@ function openPlayer(id, query) {
     if (saved > 0 && saved <= 1) { video.volume = saved; vol.value = saved; }
     // Bring back subtitles in the language chosen last time, if this video has it.
     const lang = localStorage.getItem('sunflix-subs');
-    const match = lang && (item.subs.find((s) => s.lang === lang) || (lang === 'on' ? item.subs[0] : null));
+    // "en" on a file next to the video and "eng" inside one are the same language.
+    const name = (code) => langLabel({ lang: code }, code);
+    const match = lang && (item.subs.find((s) => s.lang === lang || (s.lang && name(s.lang) === name(lang))) || (lang === 'on' ? item.subs[0] : null));
     if (match) setSub(match.key, false);
   } catch { /* private mode */ }
 
